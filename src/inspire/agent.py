@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from typing import Awaitable, Callable
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -212,9 +213,14 @@ class Agent:
         ctx: ToolContext,
         exclude: set[str],
         attach: dict[int, list[str]] | None = None,
+        max_iter: int | None = None,
+        on_step: "Callable[[str, str, int], Awaitable[None]] | None" = None,
+        limit_msg: str = "⚠️ Berhenti: terlalu banyak langkah tool. Coba pecah permintaannya.",
     ) -> str:
         schemas = self.tools.schemas(exclude)
-        for _ in range(self.cfg.max_iterations):
+        steps = 0
+        for _ in range(max_iter or self.cfg.max_iterations):
+            s = await self._maybe_compress(s)  # tugas panjang: konteks tumbuh tiap langkah
             msgs, _ = self._build(s, attach)
             try:
                 reply, used = await self.llm.complete(msgs, schemas)
@@ -235,6 +241,9 @@ class Agent:
                     result = f"Error: tool '{fn['name']}' tidak tersedia di konteks ini."
                 else:
                     result = await self.tools.call(fn["name"], fn["arguments"], ctx)
+                steps += 1
+                if on_step:
+                    await on_step(fn["name"], fn["arguments"], steps)
                 self.store.add_message(
                     s.id,
                     s.chat_id,
@@ -247,7 +256,7 @@ class Agent:
                 )
 
         self.store.touch(s.id)
-        return "⚠️ Berhenti: terlalu banyak langkah tool. Coba pecah permintaannya."
+        return limit_msg
 
     async def _image_text(self, text: str, images: list[tuple[bytes, str]]) -> tuple[str, list[str]]:
         """Kembalikan (teks yang disimpan, data URL untuk dilampirkan langsung)."""
@@ -306,6 +315,39 @@ class Agent:
             )
             # Job tidak boleh bikin/ubah job lain → cegah rantai tak terkendali.
             return await self._run(s, ctx, exclude={"schedule"})
+
+    async def run_task(
+        self,
+        chat_id: str,
+        task_id: int,
+        project: str,
+        prompt: str,
+        confirm: Confirm | None = None,
+        on_step: "Callable[[str, str, int], Awaitable[None]] | None" = None,
+    ) -> tuple[str, int]:
+        """Tugas coding di folder proyek sandbox: sesi terpisah (kind='task'), batas langkah lebih
+        besar, tanpa tool server/DB/jadwal. → (jawaban akhir, id sesi)."""
+        async with self._locks[f"task:{task_id}"]:
+            s = self.store.new_session(chat_id, kind="task")
+            content = (
+                f"{self.stamp()} [TUGAS #{task_id} — proyek '{project}', folder /workspace/{project}]\n"
+                f"{prompt}\n\n"
+                "Kerjakan mandiri sampai selesai, di folder proyek itu (cd /workspace/" + project + " untuk "
+                "perintah shell; path file relatif ke /workspace). Jangan bertanya kecuali benar-benar buntu; "
+                "kalau buntu atau ada asumsi penting, tulis di jawaban akhir. Jalankan dan tes hasilnya sebelum "
+                "menyatakan selesai. Titik simpan git dibuat otomatis, tak perlu commit sendiri. Jawaban akhir: "
+                "ringkasan 3–6 baris (apa yang dibuat/diubah, cara menjalankan, yang belum beres)."
+            )
+            self.store.add_message(s.id, chat_id, {"role": "user", "content": content})
+            ctx = ToolContext(chat_id=chat_id, session_id=s.id, confirm=confirm)
+            exclude = {n for n in self.tools.tools if n.startswith("host_") or n in ("db_query", "schedule")}
+            limit = self.cfg.task_max_iterations
+            reply = await self._run(
+                s, ctx, exclude, max_iter=limit, on_step=on_step,
+                limit_msg=f"⚠️ Batas {limit} langkah tercapai sebelum tugas dinyatakan selesai. "
+                          "Pekerjaan sampai di sini tersimpan; lanjutkan dengan /tugas lanjutkan …",
+            )
+            return reply, s.id
 
     async def note_delivered(self, chat_id: str, text: str) -> None:
         """Catat pesan yang dikirim duluan ke sesi chat, supaya user bisa membalasnya."""

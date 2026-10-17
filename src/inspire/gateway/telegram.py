@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import logging
 import time
 import uuid
@@ -26,6 +27,22 @@ from .tg_setup import TelegramSetup
 log = logging.getLogger(__name__)
 
 
+def _code_chunks(text: str, limit: int = 3500) -> list[str]:
+    """Pecah per baris sampai panjang SETELAH di-escape HTML masih muat di satu pesan."""
+    chunks, cur, size = [], [], 0
+    for line in text.splitlines():
+        line = line[:1500]
+        n = len(html.escape(line)) + 1
+        if cur and size + n > limit:
+            chunks.append("\n".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += n
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks or [""]
+
+
 def _hhmm(ts: float) -> str:
     return time.strftime("%H:%M", time.localtime(ts))
 
@@ -33,7 +50,7 @@ def _hhmm(ts: float) -> str:
 MAX_LEN = 4000  # batas Telegram 4096
 MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
 COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status",
-            "caveman", "kunci", "riwayat", "rollback"]
+            "caveman", "kunci", "riwayat", "rollback", "proyek", "tugas", "stop", "diff", "batalkan"]
 
 
 class TelegramGateway(Gateway):
@@ -93,6 +110,10 @@ class TelegramGateway(Gateway):
         for chunk in split_text(text, MAX_LEN):
             await self.tg.bot.send_message(chat_id=int(chat_id), text=chunk)
 
+    async def send_code(self, chat_id: str, text: str) -> None:
+        for chunk in _code_chunks(text):
+            await self.tg.bot.send_message(int(chat_id), f"<pre>{html.escape(chunk)}</pre>", parse_mode="HTML")
+
     async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
         await self.tg.bot.send_document(int(chat_id), InputFile(data, filename=name), caption=caption[:1000] or None)
 
@@ -149,7 +170,8 @@ class TelegramGateway(Gateway):
         chat_id = str(update.effective_chat.id)
         out = await command(self.app, chat_id, name, ctx.args or [], "/",
                             confirm=lambda t: self.confirm(chat_id, t))
-        await self._reply(update, out)
+        if out:  # kosong = perintah sudah mengirim sendiri (mis. /diff)
+            await self._reply(update, out)
 
     async def _setup(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         await self.setup.menu(update)
@@ -251,9 +273,7 @@ class TelegramGateway(Gateway):
             code = text.split()[1] if len(text.split()) > 1 else ""
             if self.try_pair(u.id, code):
                 await m.reply_text(
-                    "✅ Terhubung! Kamu pemilik bot ini.
-
-"
+                    "✅ Terhubung! Kamu pemilik bot ini.\n\n"
                     "Ketik /setup untuk atur model & fitur, /status untuk cek, atau langsung ngobrol."
                 )
             else:

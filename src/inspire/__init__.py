@@ -22,6 +22,7 @@ class App:
     outbox: "Outbox" = None
     grants: "Grants" = None
     journal: "Journal" = None
+    tasks: "Tasks" = None
     stop: asyncio.Event | None = None
     restart_requested: bool = False
     gateways: list = field(default_factory=list)
@@ -55,6 +56,7 @@ def build(settings: "Settings | None" = None) -> App:
     from .media import Media
     from .memory import Memory
     from .scheduler import Scheduler
+    from .tasks import Tasks
     from .settings import Settings
     from .skills import Skills
     from .store import Store
@@ -109,7 +111,8 @@ def build(settings: "Settings | None" = None) -> App:
     agent = Agent(cfg, store, memory, llm, tools, media, skills)
     scheduler = Scheduler(store, agent)
     register_schedule(tools, store, scheduler)
-    return App(settings, cfg, agent, scheduler, skills, outbox, grants, journal)
+    tasks = Tasks(store.db, agent, journal.sandbox, journal, cfg) if journal.sandbox else None
+    return App(settings, cfg, agent, scheduler, skills, outbox, grants, journal, tasks)
 
 
 class Router:
@@ -129,6 +132,9 @@ class Router:
 
     async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
         await self._gw(chat_id).send_file(chat_id, name, data, caption)
+
+    async def send_code(self, chat_id: str, text: str) -> None:
+        await self._gw(chat_id).send_code(chat_id, text)
 
     def confirm_for(self, chat_id: str):
         g = self._gw(chat_id)
@@ -155,6 +161,8 @@ async def run(app: App) -> bool:
     app.scheduler.attach(router.send, router.confirm_for)
     app.skills.notify = router.send
     app.outbox.send = router.send_file
+    if app.tasks:
+        app.tasks.router = router
 
     app.stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -55,6 +55,9 @@ context:
 agent:
   max_iterations: 12
   request_timeout: 120
+  task_max_iterations: 60     # mode tugas (/tugas)
+  task_max_minutes: 30
+  task_progress_seconds: 45
 
 web:
   fetch_max_chars: 12000

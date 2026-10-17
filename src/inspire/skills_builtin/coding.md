@@ -22,6 +22,13 @@ description: Menulis, menjalankan, dan memperbaiki kode di sandbox /workspace (s
    Kirim file hasil dengan `send_file` kalau user butuh filenya. Untuk banyak file:
    `cd /workspace && zip -r proyek.zip proyek` lalu `send_file`.
 
+## Pekerjaan besar
+
+Kalau pekerjaan jelas butuh banyak file atau lebih dari ~10 langkah (aplikasi kecil, refactor,
+beberapa fitur), sarankan user memakai `/tugas <deskripsi>`: berjalan di latar belakang dengan
+batas 60 langkah, titik simpan git otomatis, `/diff` untuk melihat hasil, dan `/batalkan` untuk
+mengembalikan semuanya. `/proyek baru <nama>` memilih folder proyeknya.
+
 ## Kebiasaan
 
 - Dependensi: `pip install --user <paket>` / `npm install` di folder proyek.

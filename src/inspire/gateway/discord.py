@@ -111,6 +111,11 @@ class DiscordGateway(Gateway):
         for chunk in split_text(text, MAX_LEN):
             await ch.send(chunk)
 
+    async def send_code(self, chat_id: str, text: str) -> None:
+        ch = await self._channel(chat_id)
+        for chunk in split_text(text, MAX_LEN - 20):
+            await ch.send(f"```\n{chunk.replace('```', '`​``')}\n```")
+
     async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
         ch = await self._channel(chat_id)
         await ch.send(caption[:MAX_LEN] or None, file=discord.File(io.BytesIO(data), filename=name))
@@ -152,8 +157,10 @@ class DiscordGateway(Gateway):
 
         if content.startswith(self.cmd):
             name, *args = content[len(self.cmd):].split()
-            await self._reply(message, await command(self.app, chat_id, name, args, self.cmd,
-                                                     confirm=lambda t: self.confirm(chat_id, t)))
+            out = await command(self.app, chat_id, name, args, self.cmd,
+                                confirm=lambda t: self.confirm(chat_id, t))
+            if out:
+                await self._reply(message, out)
             return
 
         images: list[tuple[bytes, str]] = []

@@ -23,6 +23,8 @@ HELP = """Perintah:
 {p}caveman auto|on|off — gaya jawaban singkat
 {p}kunci — cabut izin "semua perintah 30 menit"
 {p}riwayat — jurnal kerja agent; {p}rollback <nomor> — batalkan
+{p}proyek — folder proyek coding; {p}tugas <deskripsi> — kerjakan di latar belakang
+{p}stop — hentikan tugas; {p}diff [n] — lihat perubahan; {p}batalkan [n] — batalkan tugas terbaru
 {p}setup — atur model, suara, gambar, dll (Telegram)
 {p}status — fitur mana yang aktif
 {p}help — bantuan ini"""
@@ -73,6 +75,10 @@ class Gateway(ABC):
     async def send(self, chat_id: str, text: str) -> None:
         """Kirim pesan duluan (jadwal, notif skill)."""
 
+    async def send_code(self, chat_id: str, text: str) -> None:
+        """Kirim teks sebagai blok kode (diff, log). Bawaan: teks biasa."""
+        await self.send(chat_id, text)
+
     @abstractmethod
     async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
         """Kirim lampiran (hasil kerja di sandbox)."""
@@ -110,6 +116,10 @@ async def command(app, chat_id: str, name: str, args: list[str], p: str, confirm
     """Jalankan perintah teks yang sama di semua gateway. p = awalan ('/' atau '!').
     confirm(teks) → bool, untuk perintah yang perlu tombol (rollback)."""
     agent = app.agent
+    if name in ("proyek", "tugas", "stop", "diff", "batalkan"):
+        if not getattr(app, "tasks", None):
+            return "Mode tugas butuh sandbox (mode Docker)."
+        return await app.tasks.command(chat_id, name, args, confirm, p)
     if name == "riwayat":
         n = int(args[0]) if args and args[0].isdigit() else 15
         return f"Jurnal kerja (terbaru dulu):\n\n{app.journal.render(min(n, 50))}\n\n{p}rollback <nomor> untuk membatalkan ⏪"

@@ -76,3 +76,9 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
 
 Default keamanan: key SSH di container agent (bukan sandbox), situs milik root ditolak,
 jadwal tak bisa mengubah server.
+
+### Fase 6 — mode tugas ✅
+
+Keputusan: tugas coding di latar belakang (60 langkah / 30 menit), per proyek git di sandbox, titik simpan
+commit otomatis sebelum & sesudah, `/diff`, `/batalkan` (hanya tugas terbaru, lewat tombol), `/stop`.
+Tanpa GitHub (push tetap di luar cakupan). Hanya sandbox: tool server/DB/jadwal tak dipakai di mode tugas.

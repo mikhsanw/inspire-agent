@@ -26,6 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 - [Jadwal & pengingat](#jadwal--pengingat)
 - [Suara, gambar, file, video](#suara-gambar-file-video)
 - [Coding](#coding)
+- [Mode tugas](#mode-tugas)
 - [Web di server](#web-di-server)
 - [Jurnal & rollback](#jurnal--rollback)
 - [Gaya jawaban (caveman)](#gaya-jawaban-caveman)
@@ -49,6 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 | 🌐 | **Web** | Cari (DuckDuckGo/Bing/Yahoo, tanpa API key) dan baca halaman |
 | 🖥 | **Shell sandbox** | Perintah jalan di container terpisah. Yang berisiko minta tombol ✅/❌ |
 | 👩‍💻 | **Coding** | Tulis, jalankan, tes, dan perbaiki kode di sandbox tanpa tombol bertubi-tubi. Hasil dikirim sebagai file |
+| 🗂 | **Mode tugas** | `/tugas` menjalankan pekerjaan coding panjang di latar belakang, dengan titik simpan git, `/diff`, dan `/batalkan` |
 | 🛠 | **Web di server** | Baca log, kode, dan database web Laravel/PHP di servermu; perubahan tampil sebagai diff → ✅, dengan snapshot & rollback |
 | 📒 | **Jurnal & rollback** | Setiap aksi yang mengubah sesuatu dicatat; `/rollback <nomor>` untuk mundur |
 | 🪨 | **Gaya caveman** | Jawaban super singkat untuk hal ringan (hemat token), normal untuk penjelasan |
@@ -213,6 +215,8 @@ Telegram pakai `/`, Discord pakai `!`.
 | `/skillundo` | Batalkan perubahan skill terakhir |
 | `/caveman auto\|on\|off` | Gaya jawaban |
 | `/kunci` | Cabut izin "semua perintah sandbox 30 menit" |
+| `/proyek` · `/tugas <deskripsi>` | Folder proyek coding · kerjakan di latar belakang ([Mode tugas](#mode-tugas)) |
+| `/stop` · `/diff [n]` · `/batalkan [n]` | Hentikan tugas · lihat perubahan · batalkan tugas terbaru |
 | `/riwayat [n]` | Jurnal kerja agent |
 | `/rollback <nomor>` | Batalkan satu aksi dari jurnal (lewat ✅) |
 | `/help` | Bantuan |
@@ -306,6 +310,50 @@ perintah sandbox di chat tersebut jalan tanpa tanya. Habis sendiri setelah 30 me
 dicabut dengan `/kunci`, dan **tidak pernah** berlaku untuk jadwal atau server.
 
 Hasil kerja dikirim ke chat dengan `send_file` (maks 20MB). Butuh mode Docker.
+
+## Mode tugas
+
+Untuk pekerjaan coding yang butuh banyak langkah (aplikasi kecil, refactor, beberapa fitur).
+Beda dengan chat biasa (maks 12 langkah, satu balasan), tugas berjalan **di latar belakang** dan
+kamu tetap bisa ngobrol.
+
+```
+/proyek baru bmi                       ← folder /workspace/bmi, git aktif (opsional)
+/tugas buat skrip python hitung BMI, dengan tes, dan jalankan tesnya
+  ▶ Tugas #1 dimulai di proyek 'bmi'…
+  ⚙️ Tugas #1 · langkah 6 · tulis bmi/bmi.py; tulis bmi/test_bmi.py; pytest -q
+  ✅ Tugas #1 selesai · 11 langkah · ±3 menit
+     (ringkasan agent + daftar file yang berubah)
+/diff                                  ← diff tugas terakhir (blok kode, atau file .diff kalau panjang)
+/batalkan                              ← kembalikan proyek ke kondisi sebelum tugas (lewat ✅)
+```
+
+| Perintah | Fungsi |
+|---|---|
+| `/proyek` · `/proyek baru <nama>` · `/proyek pakai <nama>` | Lihat / buat / pilih folder proyek. Tanpa proyek aktif, `/tugas` membuatnya otomatis dari kata pertama deskripsi |
+| `/tugas <deskripsi>` | Mulai tugas. Tanpa deskripsi: bantuan + daftar tugas terakhir. Satu tugas aktif pada satu waktu |
+| `/stop` | Hentikan tugas. Pekerjaan sampai titik itu tetap tersimpan |
+| `/diff [n]` | Perubahan tugas n (bawaan: terakhir) |
+| `/batalkan [n]` | Kembalikan proyek ke sebelum tugas. Hanya tugas **terbaru** di proyek itu; lewat tombol ✅ |
+
+**Cara kerja & batas**
+- **Titik simpan git**: commit otomatis sebelum dan sesudah tiap tugas, di repo git proyek
+  (`.gitignore` dasar dibuat). `/batalkan` melakukan `git reset --hard` ke titik sebelum tugas lalu
+  `git clean -fd`; file yang di-`.gitignore` (mis. `venv`, `node_modules`) tidak tersentuh.
+  Kalau ada perubahan **sesudah** tugas (misalnya kamu menulis file sendiri), tombol konfirmasi
+  memperingatkan bahwa itu ikut hilang.
+- **Batas**: 60 langkah dan 30 menit (`agent.task_max_iterations`, `task_max_minutes`). Kalau tercapai,
+  pekerjaan tersimpan dan kamu bisa melanjutkan dengan `/tugas lanjutkan …`.
+- **Kabar kemajuan** tiap ±45 detik (`agent.task_progress_seconds`). Konteks diringkas otomatis
+  saat tugas panjang.
+- **Aturan perintah sama seperti sandbox**: perintah coding umum jalan otomatis, yang berisiko minta
+  tombol (termasuk "izinkan semua 30 menit" kalau aktif).
+- **Hanya sandbox** (butuh Docker). Tool server (`host_*`), `db_query`, dan jadwal **tidak dipakai**
+  di mode tugas: server punya snapshot dan tombolnya sendiri, dan `/batalkan` hanya mengembalikan
+  folder proyek.
+- Entri jurnal file sandbox yang dibuat selama tugas ikut ditandai dibatalkan saat `/batalkan`.
+- `/stop` menghentikan agent seketika, tapi perintah shell yang *sedang* jalan di sandbox selesai
+  sendiri sesuai timeout-nya.
 
 ## Web di server
 
@@ -443,6 +491,8 @@ Untuk setelan yang tidak ada di wizard, buat `data/config.yaml`. Isinya menimpa
 | `context.idle_hours` | 6 | Diam lebih lama dari ini → sesi baru |
 | `agent.max_iterations` | 12 | Batas langkah tool per pesan |
 | `agent.request_timeout` | 120 | Timeout panggilan model (detik) |
+| `agent.task_max_iterations` / `task_max_minutes` | 60 / 30 | Batas satu tugas |
+| `agent.task_progress_seconds` | 45 | Jarak minimal antar kabar kemajuan |
 | `shell.enabled` / `timeout` / `confirm_timeout` | true / 60 / 300 | Shell |
 | `web.search_backends` | `[duckduckgo, bing, yahoo]` | Mesin cari, dicoba berurutan |
 | `web.fetch_max_chars` | 12000 | Batas teks halaman web |
@@ -518,6 +568,7 @@ src/inspire/
   media.py           STT, deskripsi gambar, ekstrak file, transkrip video
   skills.py          skill markdown + git
   journal.py         jurnal aksi + rollback
+  tasks.py           mode tugas: proyek git, latar belakang, diff, batalkan
   sandbox_server.py  server exec + file di container sandbox (stdlib)
   skills_builtin/    skill bawaan: coding, web-laravel
   setup/             bagian setup, tes key, status, wizard terminal

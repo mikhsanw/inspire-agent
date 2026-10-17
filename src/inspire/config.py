@@ -57,6 +57,9 @@ class Config:
     keep_last: int = 12
     idle_hours: float = 6
     max_iterations: int = 12
+    task_max_iterations: int = 60
+    task_max_minutes: int = 30
+    task_progress_seconds: int = 45
     request_timeout: float = 120
     timezone: str = "Asia/Jakarta"
     sandbox_url: str = ""         # kosong = tool shell mati
@@ -132,6 +135,9 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
         keep_last=ctx.get("keep_last", 12),
         idle_hours=ctx.get("idle_hours", 6),
         max_iterations=agent.get("max_iterations", 12),
+        task_max_iterations=int(agent.get("task_max_iterations", 60)),
+        task_max_minutes=int(agent.get("task_max_minutes", 30)),
+        task_progress_seconds=int(agent.get("task_progress_seconds", 45)),
         request_timeout=agent.get("request_timeout", 120),
         timezone=raw.get("timezone", "Asia/Jakarta"),
         sandbox_url=shell.get("sandbox_url", ""),

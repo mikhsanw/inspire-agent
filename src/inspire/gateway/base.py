@@ -20,15 +20,45 @@ HELP = """Perintah:
 {p}jobs — lihat jadwal aktif
 {p}skills — daftar skill + riwayat perubahan
 {p}skillundo — batalkan perubahan skill terakhir
+{p}setup — atur model, suara, gambar, dll (Telegram)
+{p}status — fitur mana yang aktif
 {p}help — bantuan ini"""
 
 
 class Gateway(ABC):
     #: awalan chat_id milik gateway ini ("" = Telegram, "dc:" = Discord)
     prefix: str = ""
+    #: kunci di settings.owner
+    name: str = ""
+
+    def __init__(self, app) -> None:
+        self.app = app
+        self.agent: Agent = app.agent
+        self._bad_pair: dict[int, int] = {}
 
     def owns(self, chat_id: str) -> bool:
         return chat_id.startswith(self.prefix) if self.prefix else ":" not in chat_id
+
+    def owner_ids(self) -> list[int]:
+        cfg = self.app.cfg
+        return cfg.allowed_user_ids if self.name == "telegram" else cfg.discord_user_ids
+
+    def refresh_owners(self) -> None:
+        """Dipanggil setelah setelan berubah (mis. pairing)."""
+
+    def try_pair(self, user_id: int, code: str) -> bool:
+        """Belum ada pemilik + kode benar → user ini jadi pemilik."""
+        if self.owner_ids() or self._bad_pair.get(user_id, 0) >= 3:
+            return False
+        s = self.app.settings
+        s.load()  # kode bisa baru dibuat proses lain (`inspire pair`)
+        if code.strip() and code.strip() == s.data.get("pairing"):
+            s.add_owner(self.name, user_id)
+            self.app.reload()
+            log.info("%s: pemilik baru %s", self.name, user_id)
+            return True
+        self._bad_pair[user_id] = self._bad_pair.get(user_id, 0) + 1
+        return False
 
     @abstractmethod
     async def start(self) -> None: ...
@@ -69,8 +99,15 @@ def safe_name(name: str) -> str:
 # --- perintah bersama ------------------------------------------------------
 
 
-async def command(agent: Agent, chat_id: str, name: str, args: list[str], p: str) -> str:
+async def command(app, chat_id: str, name: str, args: list[str], p: str) -> str:
     """Jalankan perintah teks yang sama di semua gateway. p = awalan ('/' atau '!')."""
+    agent = app.agent
+    if name == "status":
+        from ..setup import render, status
+
+        return "Status inspire:\n\n" + render(await status(app.settings, live=True))
+    if name == "setup":
+        return "Setup lengkap ada di Telegram (/setup) atau di terminal server: `inspire setup`."
     if name in ("start", "help"):
         return f"Halo, aku inspire.\n\n{HELP.format(p=p)}"
     if name == "new":

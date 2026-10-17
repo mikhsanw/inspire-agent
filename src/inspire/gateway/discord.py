@@ -9,7 +9,6 @@ from pathlib import Path
 
 import discord
 
-from ..agent import Agent
 from .base import Gateway, command, document_text, split_text, voice_text
 
 log = logging.getLogger(__name__)
@@ -48,26 +47,18 @@ class ConfirmView(discord.ui.View):
 
 class DiscordGateway(Gateway):
     prefix = "dc:"
+    name = "discord"
 
-    def __init__(
-        self,
-        token: str,
-        allowed_user_ids: list[int],
-        agent: Agent,
-        confirm_timeout: int = 300,
-        inbox_dir: Path | None = None,
-        command_prefix: str = "!",
-    ):
-        if not token:
+    def __init__(self, app):
+        super().__init__(app)
+        cfg = app.cfg
+        if not cfg.discord_token:
             raise ValueError("DISCORD_BOT_TOKEN kosong")
-        if not allowed_user_ids:
-            raise ValueError("discord allowed_user_ids kosong — bot menolak jalan tanpa whitelist")
-        self.token = token
-        self.agent = agent
-        self.allowed = set(allowed_user_ids)
-        self.confirm_timeout = confirm_timeout
-        self.inbox_dir = inbox_dir
-        self.cmd = command_prefix
+        self.token = cfg.discord_token
+        self.allowed = set(self.owner_ids())
+        self.confirm_timeout = cfg.confirm_timeout
+        self.inbox_dir: Path | None = cfg.inbox_dir
+        self.cmd = cfg.discord_prefix
         intents = discord.Intents.default()
         intents.message_content = True  # aktifkan juga "Message Content Intent" di Developer Portal
         self.client = discord.Client(intents=intents)
@@ -88,6 +79,10 @@ class DiscordGateway(Gateway):
     async def stop(self) -> None:
         with contextlib.suppress(Exception):
             await self.client.close()
+
+    def refresh_owners(self) -> None:
+        self.allowed.clear()
+        self.allowed.update(self.owner_ids())  # set yang sama dipakai ConfirmView
 
     async def on_ready(self) -> None:
         log.info("Discord gateway jalan sebagai %s", self.client.user)
@@ -119,18 +114,25 @@ class DiscordGateway(Gateway):
         is_dm = message.guild is None
         if not is_dm and self.client.user not in message.mentions:
             return  # di server: hanya kalau di-mention
-        if message.author.id not in self.allowed:
-            log.warning("discord: user tak dikenal id=%s (%s)", message.author.id, message.author)
-            return
-
-        chat_id = f"{self.prefix}{message.channel.id}"
         content = message.content
         if self.client.user:
             content = content.replace(f"<@{self.client.user.id}>", "").strip()
 
+        if message.author.id not in self.allowed:
+            words = content.split()
+            if is_dm and not self.allowed and words[:1] == [f"{self.cmd}pair"]:
+                ok = self.try_pair(message.author.id, words[1] if len(words) > 1 else "")
+                await self._reply(message, "✅ Terhubung! Kamu pemilik bot ini. Ketik "
+                                  f"{self.cmd}help." if ok else "Kode pairing salah.")
+                return
+            log.warning("discord: user tak dikenal id=%s (%s)", message.author.id, message.author)
+            return
+
+        chat_id = f"{self.prefix}{message.channel.id}"
+
         if content.startswith(self.cmd):
             name, *args = content[len(self.cmd):].split()
-            await self._reply(message, await command(self.agent, chat_id, name, args, self.cmd))
+            await self._reply(message, await command(self.app, chat_id, name, args, self.cmd))
             return
 
         images: list[tuple[bytes, str]] = []

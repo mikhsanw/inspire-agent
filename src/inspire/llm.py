@@ -37,12 +37,23 @@ class LLM:
         return True
 
     def order(self) -> list[str]:
-        return [self.active] + [n for n in self.fallback if n != self.active]
+        first = [self.active] if self.active in self.models else []
+        return first + [n for n in self.fallback if n != self.active and n in self.models]
+
+    def update(self, models: dict[str, ModelCfg], default: str, fallback: list[str]) -> None:
+        """Setelan berubah (mis. dari /setup) → pakai langsung, tanpa restart."""
+        self.models, self.fallback = models, fallback
+        if self.active not in models:
+            self.active = default
 
     async def complete(
         self, messages: list[dict], tools: list[dict] | None = None
     ) -> tuple[dict, str]:
         """Kembalikan (pesan assistant format OpenAI, nama model yang menjawab)."""
+        if not self.order():
+            raise AllModelsFailed(
+                "Belum ada model. Atur dengan /setup (Telegram) atau `inspire setup model`."
+            )
         errors = []
         for name in self.order():
             cfg = self.models[name]

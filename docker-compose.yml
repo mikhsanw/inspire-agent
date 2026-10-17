@@ -1,12 +1,16 @@
+# Dikelola oleh `inspire` (bin/inspire). Setelan ada di data/settings.json, bukan di sini.
 services:
   inspire:
     build: .
+    image: inspire:local
     restart: unless-stopped
-    env_file: .env
+    env_file: .env          # hanya SANDBOX_TOKEN (dibuat installer)
     environment:
-      INSPIRE_CONFIG: /app/config.yaml
+      INSPIRE_HOME: /app/data
+      INSPIRE_MODE: docker
+      INSPIRE_INBOX: /app/inbox
+      SANDBOX_URL: http://sandbox:8765
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
       - ./workspace/inbox:/app/inbox   # file kiriman user → terlihat di sandbox
     depends_on: [sandbox]
@@ -15,8 +19,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
+    image: inspire-sandbox:local
     restart: unless-stopped
-    # Hanya token yang masuk, bukan seluruh .env.
+    # Hanya token yang masuk, bukan rahasia lain.
     environment:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN}
     volumes:

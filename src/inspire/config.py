@@ -1,4 +1,4 @@
-"""Muat config.yaml. Nilai ${VAR} diganti dari environment."""
+"""Ubah pohon setelan (dari settings.json / config.yaml) jadi Config. ${VAR} diisi dari env."""
 
 from __future__ import annotations
 
@@ -73,7 +73,17 @@ def _ids(raw) -> list[int]:
 
 
 def load(path: Path | str) -> Config:
-    raw = _expand(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})
+    """Dari satu file YAML (cara lama, dipakai test & config lanjutan)."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return from_raw(raw, Path(raw.get("data_dir", "data")))
+
+
+def from_settings(settings) -> Config:
+    return from_raw(settings.raw(), settings.dir)
+
+
+def from_raw(raw: dict, data_dir: Path) -> Config:
+    raw = _expand(raw)
     tg = raw.get("telegram", {})
     m = raw.get("models", {})
     mem = raw.get("memory", {})
@@ -84,16 +94,15 @@ def load(path: Path | str) -> Config:
     md = raw.get("media", {})
     stt = md.get("stt", {})
 
+    # Boleh kosong: bot tetap hidup dan mengarahkan ke /setup.
     models = {name: ModelCfg(**spec) for name, spec in (m.get("list") or {}).items()}
-    if not models:
-        raise ValueError("config: models.list kosong")
-    default = m.get("default") or next(iter(models))
+    default = m.get("default") if m.get("default") in models else next(iter(models), "")
     fallback = [n for n in (m.get("fallback") or []) if n in models]
 
     dc = raw.get("discord", {})
 
     return Config(
-        data_dir=Path(raw.get("data_dir", "data")),
+        data_dir=data_dir,
         telegram_token=tg.get("token", ""),
         allowed_user_ids=_ids(tg.get("allowed_user_ids")),
         discord_token=dc.get("token", ""),

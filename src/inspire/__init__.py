@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -15,21 +14,44 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class App:
+    settings: "Settings"
     cfg: "Config"
     agent: "Agent"
     scheduler: "Scheduler"
     skills: "Skills"
+    stop: asyncio.Event | None = None
+    restart_requested: bool = False
+    gateways: list = field(default_factory=list)
+
+    def reload(self) -> None:
+        """Setelan berubah → terapkan yang bisa langsung (model, key, media)."""
+        from .config import from_settings
+
+        new = from_settings(self.settings)
+        self.cfg.__dict__.update(new.__dict__)  # objek sama dipakai agent & tool
+        self.agent.llm.update(new.models, new.default_model, new.fallback)
+        if self.agent.media:
+            self.agent.media.cfg = new.media
+        for g in self.gateways:
+            g.refresh_owners()
+
+    def request_restart(self, notify_chat: str | None = None) -> None:
+        if notify_chat:
+            self.settings.data["restart_notify"] = notify_chat
+            self.settings.save()
+        self.restart_requested = True
+        if self.stop:
+            self.stop.set()
 
 
-def build(config_path: str | Path) -> App:
-    from dotenv import load_dotenv
-
-    from . import config as config_mod
+def build(settings: "Settings | None" = None) -> App:
     from .agent import Agent
+    from .config import from_settings
     from .llm import LLM
     from .media import Media
     from .memory import Memory
     from .scheduler import Scheduler
+    from .settings import Settings
     from .skills import Skills
     from .store import Store
     from .tools import Registry
@@ -40,8 +62,10 @@ def build(config_path: str | Path) -> App:
     from .tools.video import register_video
     from .tools.web import register_web
 
-    load_dotenv()
-    cfg = config_mod.load(config_path)
+    if settings is None:
+        settings = Settings()
+        settings.migrate_legacy(Path.cwd())
+    cfg = from_settings(settings)
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
 
     store = Store(cfg.data_dir / "inspire.db")
@@ -55,15 +79,15 @@ def build(config_path: str | Path) -> App:
     register_web(tools, cfg.fetch_max_chars, cfg.search_backends)
     register_video(tools, media)
     register_skill(tools, skills)
-    if cfg.sandbox_url:
+    if cfg.sandbox_url and settings.get("shell.enabled") is not False:
         register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout)
     else:
-        log.warning("shell.sandbox_url kosong → tool shell mati")
+        log.info("shell mati (butuh mode Docker / dimatikan di setup)")
 
     agent = Agent(cfg, store, memory, llm, tools, media, skills)
     scheduler = Scheduler(store, agent)
     register_schedule(tools, store, scheduler)
-    return App(cfg, agent, scheduler, skills)
+    return App(settings, cfg, agent, scheduler, skills)
 
 
 class Router:
@@ -86,67 +110,53 @@ class Router:
         return lambda text: g.confirm(chat_id, text)
 
 
-async def run(app: App) -> None:
+async def run(app: App) -> bool:
+    """Jalan sampai dihentikan. True = minta restart (dipanggil ulang oleh cli)."""
     cfg = app.cfg
-    gateways = []
     if cfg.telegram_token:
         from .gateway.telegram import TelegramGateway
 
-        gateways.append(
-            TelegramGateway(
-                cfg.telegram_token, cfg.allowed_user_ids, app.agent, cfg.confirm_timeout, cfg.inbox_dir
-            )
-        )
+        app.gateways.append(TelegramGateway(app))
     if cfg.discord_token:
         from .gateway.discord import DiscordGateway
 
-        gateways.append(
-            DiscordGateway(
-                cfg.discord_token,
-                cfg.discord_user_ids,
-                app.agent,
-                cfg.confirm_timeout,
-                cfg.inbox_dir,
-                cfg.discord_prefix,
-            )
+        app.gateways.append(DiscordGateway(app))
+    if not app.gateways:
+        raise SystemExit(
+            "Belum ada gateway. Jalankan `inspire setup` (isi token Telegram atau Discord)."
         )
-    if not gateways:
-        raise SystemExit("Isi minimal satu: TELEGRAM_BOT_TOKEN atau DISCORD_BOT_TOKEN.")
 
-    router = Router(gateways)
+    router = Router(app.gateways)
     app.scheduler.attach(router.send, router.confirm_for)
     app.skills.notify = router.send
 
-    stop = asyncio.Event()
+    app.stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, stop.set)
+            loop.add_signal_handler(sig, app.stop.set)
 
     started = []
     try:
-        for g in gateways:
+        for g in app.gateways:
             await g.start()
             started.append(g)
         app.scheduler.start()
-        log.info("inspire jalan: %s", ", ".join(type(g).__name__ for g in gateways))
-        await stop.wait()
+        log.info("inspire jalan: %s", ", ".join(type(g).__name__ for g in app.gateways))
+        if any(not g.owner_ids() for g in app.gateways):
+            log.warning(
+                "BELUM ADA PEMILIK. Kirim ke bot: /pair %s (Telegram) atau !pair %s (DM Discord)",
+                app.settings.pairing_code(), app.settings.pairing_code(),
+            )
+        if chat := app.settings.data.pop("restart_notify", None):
+            app.settings.save()
+            with contextlib.suppress(Exception):
+                await router.send(chat, "✅ inspire aktif lagi.")
+        await app.stop.wait()
     finally:
         log.info("berhenti…")
         with contextlib.suppress(Exception):
             app.scheduler.sched.shutdown(wait=False)
         for g in started:
             await g.stop()
-
-
-def main() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    for noisy in ("httpx", "yt_dlp", "apscheduler"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-    # discord.py peringatkan soal fitur voice channel yang memang tak dipakai.
-    logging.getLogger("discord").setLevel(logging.ERROR)
-    app = build(os.environ.get("INSPIRE_CONFIG", "config.yaml"))
-    asyncio.run(run(app))
+    return app.restart_requested

@@ -1,5 +1,7 @@
-# Salin jadi config.yaml. Rahasia taruh di .env, rujuk dengan ${NAMA}.
-data_dir: data
+# OPSIONAL — setelan lanjutan. Biasanya cukup `inspire setup` atau /setup di Telegram.
+# Salin ke data/config.yaml; isinya menimpa data/settings.json.
+# Key/rahasia JANGAN di sini: isi lewat setup (tersimpan di settings.json),
+# lalu rujuk dengan ${NAMA_KEY}.
 timezone: Asia/Jakarta
 
 # Isi minimal satu gateway. Token kosong = gateway itu mati.

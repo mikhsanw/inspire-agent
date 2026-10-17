@@ -12,6 +12,22 @@ from inspire.tools.skill import register_skill
 from test_core import make
 
 
+def fake_app(agent, tmp_path):
+    from inspire.settings import Settings
+
+    st = Settings(tmp_path / "st")
+    app = SimpleNamespace(agent=agent, settings=st, cfg=agent.cfg, gateways=[])
+
+    def reload():
+        agent.cfg.allowed_user_ids = st.owners("telegram")
+        agent.cfg.discord_user_ids = st.owners("discord")
+        for g in app.gateways:
+            g.refresh_owners()
+
+    app.reload = reload
+    return app
+
+
 def test_skills_crud_git_undo(tmp_path):
     sk = Skills(tmp_path / "skills")
     assert sk.save("Bad Name", "d", "b", create=True).startswith("Error")
@@ -71,12 +87,14 @@ async def test_skill_tool_notifies_and_shows_in_next_session(tmp_path):
 async def test_shared_commands(tmp_path):
     agent, _ = make(tmp_path, [])
     agent.skills = Skills(tmp_path / "skills")
-    assert "!model" in await command(agent, "dc:1", "help", [], "!")
-    assert "Sesi baru" in await command(agent, "1", "new", [], "/")
-    assert "▶ fake" in await command(agent, "1", "model", [], "/")
-    assert "Tak ada model" in await command(agent, "1", "model", ["nope"], "/")
-    assert "belum ada skill" in await command(agent, "1", "skills", [], "/")
-    assert "tak dikenal" in await command(agent, "1", "xyz", [], "/")
+    app = fake_app(agent, tmp_path)
+    assert "!model" in await command(app, "dc:1", "help", [], "!")
+    assert "Sesi baru" in await command(app, "1", "new", [], "/")
+    assert "▶ fake" in await command(app, "1", "model", [], "/")
+    assert "Tak ada model" in await command(app, "1", "model", ["nope"], "/")
+    assert "belum ada skill" in await command(app, "1", "skills", [], "/")
+    assert "tak dikenal" in await command(app, "1", "xyz", [], "/")
+    assert "Status inspire" in await command(app, "1", "status", [], "/")
 
 
 async def test_router_picks_gateway():
@@ -116,7 +134,8 @@ async def test_discord_on_message(tmp_path, monkeypatch):
     from inspire.gateway import discord as dg
 
     agent, llm = make(tmp_path, [{"role": "assistant", "content": "halo juga"}])
-    gw = dg.DiscordGateway("tok", [7], agent)
+    agent.cfg.discord_token, agent.cfg.discord_user_ids = "tok", [7]
+    gw = dg.DiscordGateway(fake_app(agent, tmp_path))
     gw.client = SimpleNamespace(user=SimpleNamespace(id=1))
     replies = []
 
@@ -143,7 +162,52 @@ async def test_discord_on_message(tmp_path, monkeypatch):
     n = len(replies)
     await gw.on_message(msg("halo", author=8))               # orang asing
     await gw.on_message(msg("halo", guild=object()))         # server tanpa mention
+    await gw.on_message(msg("!pair 123", author=8))          # sudah ada pemilik → diam
     assert len(replies) == n
+
+
+async def test_discord_pairing(tmp_path):
+    from inspire.gateway import discord as dg
+
+    agent, _ = make(tmp_path, [])
+    agent.cfg.discord_token, agent.cfg.discord_user_ids = "tok", []
+    app = fake_app(agent, tmp_path)
+    gw = dg.DiscordGateway(app)
+    app.gateways.append(gw)
+    gw.client = SimpleNamespace(user=SimpleNamespace(id=1))
+    replies = []
+
+    def msg(content, author=9):
+        async def reply(text, mention_author=False):
+            replies.append(text)
+        return SimpleNamespace(author=SimpleNamespace(id=author, bot=False), guild=None, mentions=[],
+                               content=content, attachments=[], reply=reply,
+                               channel=SimpleNamespace(id=5, send=reply))
+
+    code = app.settings.pairing_code()
+    wrong = "000000" if code != "000000" else "111111"
+    await gw.on_message(msg(f"!pair {wrong}"))
+    assert replies[-1] == "Kode pairing salah."
+    await gw.on_message(msg(f"!pair {code}"))
+    assert replies[-1].startswith("✅ Terhubung")
+    assert app.settings.owners("discord") == [9] and 9 in gw.allowed
+    assert "pairing" not in app.settings.data
+    # setelah ada pemilik, kode apa pun dari orang lain diabaikan
+    n = len(replies)
+    await gw.on_message(msg(f"!pair {code}", author=10))
+    assert len(replies) == n
+
+
+async def test_pair_bruteforce_blocked(tmp_path):
+    from inspire.gateway import discord as dg
+
+    agent, _ = make(tmp_path, [])
+    agent.cfg.discord_token, agent.cfg.discord_user_ids = "tok", []
+    gw = dg.DiscordGateway(fake_app(agent, tmp_path))
+    code = gw.app.settings.pairing_code()
+    for guess in ("1", "2", "3"):
+        assert not gw.try_pair(66, guess)
+    assert not gw.try_pair(66, code)  # sudah 3x salah → diblok
 
 
 def test_safe_name():

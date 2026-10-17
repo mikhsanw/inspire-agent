@@ -19,71 +19,71 @@ from telegram.ext import (
     filters,
 )
 
-from ..agent import Agent
 from .base import Gateway, command, document_text, split_text, voice_text
+from .tg_setup import TelegramSetup
 
 log = logging.getLogger(__name__)
 MAX_LEN = 4000  # batas Telegram 4096
 MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
-COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo"]
+COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status"]
 
 
 class TelegramGateway(Gateway):
     prefix = ""
+    name = "telegram"
 
-    def __init__(
-        self,
-        token: str,
-        allowed_user_ids: list[int],
-        agent: Agent,
-        confirm_timeout: int = 300,
-        inbox_dir: Path | None = None,
-    ):
-        if not token:
+    def __init__(self, app):
+        super().__init__(app)
+        cfg = app.cfg
+        if not cfg.telegram_token:
             raise ValueError("TELEGRAM_BOT_TOKEN kosong")
-        if not allowed_user_ids:
-            raise ValueError("telegram allowed_user_ids kosong — bot menolak jalan tanpa whitelist")
-        self.agent = agent
-        self.allowed = set(allowed_user_ids)
-        self.confirm_timeout = confirm_timeout
-        self.inbox_dir = inbox_dir
+        self.confirm_timeout = cfg.confirm_timeout
+        self.inbox_dir: Path | None = cfg.inbox_dir
         self._pending: dict[str, asyncio.Future] = {}
-        self.app = (
+        self.setup = TelegramSetup(app)
+        self.tg = (
             Application.builder()
-            .token(token)
+            .token(cfg.telegram_token)
             # Wajib: handler pesan menunggu tombol ✅/❌, jadi update tombol
             # harus bisa diproses bersamaan. Urutan per chat dijaga lock di Agent.
             .concurrent_updates(True)
             .build()
         )
-        owner = filters.User(user_id=allowed_user_ids)
-        add = self.app.add_handler
+        # Filter pemilik bisa diubah saat jalan (pairing) → refresh_owners().
+        self.owner = filters.User(user_id=self.owner_ids())
+        owner = self.owner
+        add = self.tg.add_handler
         add(CommandHandler(COMMANDS, self._command, filters=owner))
+        add(CommandHandler("setup", self._setup, filters=owner))
         add(CallbackQueryHandler(self._button, pattern=r"^(ok|no):"))
+        add(CallbackQueryHandler(self._setup_button, pattern=r"^su:"))
         add(MessageHandler(owner & filters.TEXT & ~filters.COMMAND, self._text))
         add(MessageHandler(owner & (filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE), self._voice))
         add(MessageHandler(owner & (filters.PHOTO | filters.Document.IMAGE), self._photo))
         add(MessageHandler(owner & filters.Document.ALL, self._document))
         add(MessageHandler(owner & filters.VIDEO, self._video))
-        add(MessageHandler(~owner, self._stranger))  # orang lain: diam, catat di log
+        add(MessageHandler(~owner, self._stranger))  # pairing, atau diam
 
     # --- siklus hidup ---------------------------------------------------
 
+    def refresh_owners(self) -> None:
+        self.owner.user_ids = self.owner_ids()
+
     async def start(self) -> None:
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        log.info("Telegram gateway jalan (polling)")
+        await self.tg.initialize()
+        await self.tg.start()
+        await self.tg.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        log.info("Telegram gateway jalan (polling) sebagai @%s", self.tg.bot.username)
 
     async def stop(self) -> None:
         with contextlib.suppress(Exception):
-            await self.app.updater.stop()
-            await self.app.stop()
-            await self.app.shutdown()
+            await self.tg.updater.stop()
+            await self.tg.stop()
+            await self.tg.shutdown()
 
     async def send(self, chat_id: str, text: str) -> None:
         for chunk in split_text(text, MAX_LEN):
-            await self.app.bot.send_message(chat_id=int(chat_id), text=chunk)
+            await self.tg.bot.send_message(chat_id=int(chat_id), text=chunk)
 
     async def confirm(self, chat_id: str, text: str) -> bool:
         key = uuid.uuid4().hex[:16]
@@ -95,7 +95,7 @@ class TelegramGateway(Gateway):
                 InlineKeyboardButton("❌ Batal", callback_data=f"no:{key}"),
             ]]
         )
-        msg = await self.app.bot.send_message(int(chat_id), text[:4000], reply_markup=kb)
+        msg = await self.tg.bot.send_message(int(chat_id), text[:4000], reply_markup=kb)
         try:
             return await asyncio.wait_for(fut, self.confirm_timeout)
         except asyncio.TimeoutError:
@@ -107,7 +107,7 @@ class TelegramGateway(Gateway):
 
     async def _button(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
-        if not q.from_user or q.from_user.id not in self.allowed:
+        if not q.from_user or q.from_user.id not in self.owner_ids():
             await q.answer("Bukan untukmu.")
             return
         action, key = q.data.split(":", 1)
@@ -131,8 +131,17 @@ class TelegramGateway(Gateway):
 
     async def _command(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         name = update.effective_message.text.split()[0].lstrip("/").split("@")[0]
-        out = await command(self.agent, str(update.effective_chat.id), name, ctx.args or [], "/")
+        out = await command(self.app, str(update.effective_chat.id), name, ctx.args or [], "/")
         await self._reply(update, out)
+
+    async def _setup(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        await self.setup.menu(update)
+
+    async def _setup_button(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.callback_query.from_user or update.callback_query.from_user.id not in self.owner_ids():
+            await update.callback_query.answer("Bukan untukmu.")
+            return
+        await self.setup.on_button(update)
 
     async def _run_agent(
         self,
@@ -170,6 +179,9 @@ class TelegramGateway(Gateway):
         return bytes(await f.download_as_bytearray())
 
     async def _text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if self.setup.is_waiting(str(update.effective_chat.id)):
+            await self.setup.on_text(update)  # balasan untuk /setup (mis. key)
+            return
         await self._run_agent(update, ctx, update.effective_message.text)
 
     async def _voice(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -200,6 +212,9 @@ class TelegramGateway(Gateway):
     async def _document(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         m = update.effective_message
         data = await self._download(update, ctx, m.document)
+        if data is not None and self.setup.is_waiting(str(update.effective_chat.id)):
+            await self.setup.on_document(update, data)  # mis. cookies.txt
+            return
         if data is not None:
             text = document_text(
                 self.agent, self.inbox_dir, m.document.file_name or "file", data, m.caption or ""
@@ -210,5 +225,21 @@ class TelegramGateway(Gateway):
         await self._reply(update, "🎬 File video belum didukung. Kirim link-nya saja (YouTube, dll).")
 
     async def _stranger(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        u = update.effective_user
-        log.warning("pesan dari user tak dikenal: id=%s username=%s", u and u.id, u and u.username)
+        u, m = update.effective_user, update.effective_message
+        if not u or not m:
+            return
+        text = (m.text or "").strip()
+        # /pair 123456, atau /start 123456 (dari tautan t.me/bot?start=123456)
+        if not self.owner_ids() and text.split()[:1] in (["/pair"], ["/start"]):
+            code = text.split()[1] if len(text.split()) > 1 else ""
+            if self.try_pair(u.id, code):
+                await m.reply_text(
+                    "✅ Terhubung! Kamu pemilik bot ini.
+
+"
+                    "Ketik /setup untuk atur model & fitur, /status untuk cek, atau langsung ngobrol."
+                )
+            else:
+                await m.reply_text("Kode pairing salah. Lihat kodenya di server: `inspire pair`.")
+            return
+        log.warning("pesan dari user tak dikenal: id=%s username=%s", u.id, u.username)

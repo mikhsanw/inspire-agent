@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Perintah `inspire` di server. Membungkus mode Docker atau native (lihat .mode).
+set -euo pipefail
+
+SELF="$(readlink -f "$0" 2>/dev/null || python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")"
+DIR="${INSPIRE_DIR:-$(cd "$(dirname "$SELF")/.." && pwd)}"
+MODE="$(cat "$DIR/.mode" 2>/dev/null || echo native)"
+cd "$DIR"
+
+docker_cmd() {
+  if docker info >/dev/null 2>&1; then docker "$@"; else sudo docker "$@"; fi
+}
+dc() { docker_cmd compose "$@"; }
+
+has_systemd_unit() { command -v systemctl >/dev/null && systemctl cat inspire >/dev/null 2>&1; }
+
+py() {
+  INSPIRE_HOME="$DIR/data" INSPIRE_MODE="$MODE" uv run --project "$DIR" --no-dev -q inspire "$@"
+}
+
+running() {
+  if [ "$MODE" = docker ]; then
+    [ -n "$(dc ps -q --status running inspire 2>/dev/null)" ]
+  else
+    has_systemd_unit && systemctl is-active --quiet inspire
+  fi
+}
+
+svc() {  # start|stop|restart
+  if [ "$MODE" = docker ]; then
+    case "$1" in
+      start) dc up -d ;;
+      stop) dc stop ;;
+      restart) dc restart inspire ;;
+    esac
+  elif has_systemd_unit; then
+    sudo systemctl "$1" inspire
+  else
+    echo "Tak ada service (mode dev). Jalankan langsung: inspire run"
+  fi
+}
+
+case "${1:-help}" in
+  setup|doctor|pair)
+    if [ "$MODE" = docker ]; then
+      # `run --rm` memakai image & volume yang sama dengan service.
+      dc run --rm --no-deps inspire inspire "$@"
+    else
+      py "$@"
+    fi
+    # Setelan baru (token, gateway) → nyalakan ulang service kalau sedang jalan.
+    if [ "$1" = setup ] && running; then
+      echo "↻ Restart service supaya setelan baru dipakai…"
+      svc restart
+    fi
+    ;;
+  run)
+    if [ "$MODE" = docker ]; then dc up; else py run; fi
+    ;;
+  start|stop|restart)
+    svc "$1"
+    ;;
+  status)
+    if running; then echo "● inspire jalan ($MODE)"; else echo "○ inspire berhenti ($MODE)"; fi
+    ;;
+  logs)
+    if [ "$MODE" = docker ]; then dc logs -f --tail 100 inspire
+    elif has_systemd_unit; then sudo journalctl -u inspire -f -n 100
+    else echo "Mode dev: log tampil langsung di 'inspire run'."; fi
+    ;;
+  update)
+    echo "⬇ Ambil versi terbaru…"
+    git -C "$DIR" pull --ff-only
+    if [ "$MODE" = docker ]; then
+      dc up -d --build
+    else
+      uv sync --project "$DIR" --frozen --no-dev -q
+      running && svc restart || true
+    fi
+    echo "✅ Sudah versi terbaru."
+    ;;
+  help|-h|--help|*)
+    cat <<EOF
+inspire — agent AI pribadi ($MODE, $DIR)
+
+  inspire setup [bagian]   atur (tanpa bagian = wizard Cepat/Lengkap)
+                           bagian: telegram pair model suara gambar discord shell youtube zona
+  inspire doctor           cek semua fitur & key
+  inspire pair             tampilkan kode pairing
+  inspire start|stop|restart|status
+  inspire logs             lihat log
+  inspire update           ambil versi terbaru & restart
+  inspire run              jalan di depan (dev)
+
+Di Telegram: /setup  /status  /help
+EOF
+    ;;
+esac

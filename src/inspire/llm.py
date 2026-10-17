@@ -49,7 +49,7 @@ class LLM:
             try:
                 resp = await litellm.acompletion(
                     model=cfg.model,
-                    messages=messages,
+                    messages=messages if cfg.vision else strip_images(messages),
                     tools=tools or None,
                     api_base=cfg.api_base or None,
                     api_key=cfg.api_key or None,
@@ -61,6 +61,25 @@ class LLM:
                 log.warning("model %s gagal: %s", name, e)
                 errors.append(f"{name}: {type(e).__name__}: {str(e)[:200]}")
         raise AllModelsFailed("; ".join(errors))
+
+
+def has_images(messages: list[dict]) -> bool:
+    return any(isinstance(m.get("content"), list) for m in messages)
+
+
+def strip_images(messages: list[dict]) -> list[dict]:
+    """Model tanpa vision: ganti bagian gambar dengan catatan teks."""
+    if not has_images(messages):
+        return messages
+    out = []
+    for m in messages:
+        if isinstance(m.get("content"), list):
+            texts = [p["text"] for p in m["content"] if p.get("type") == "text"]
+            n = sum(1 for p in m["content"] if p.get("type") == "image_url")
+            texts.append(f"[{n} gambar dilampirkan, tapi model ini tidak bisa melihat gambar]")
+            m = {**m, "content": "\n".join(texts)}
+        out.append(m)
+    return out
 
 
 def _to_dict(message) -> dict:

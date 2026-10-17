@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from .media import MediaCfg
+
 _ENV = re.compile(r"\$\{(\w+)\}")
 
 
@@ -54,6 +56,8 @@ class Config:
     confirm_timeout: int = 300    # detik menunggu tombol ✅/❌
     fetch_max_chars: int = 12000
     search_backends: list[str] = field(default_factory=lambda: ["duckduckgo", "bing", "yahoo"])
+    media: MediaCfg = field(default_factory=MediaCfg)
+    inbox_dir: Path | None = None  # salinan file kiriman user, terlihat di sandbox
 
 
 def load(path: Path | str) -> Config:
@@ -65,6 +69,8 @@ def load(path: Path | str) -> Config:
     agent = raw.get("agent", {})
     shell = raw.get("shell", {})
     web = raw.get("web", {})
+    md = raw.get("media", {})
+    stt = md.get("stt", {})
 
     models = {name: ModelCfg(**spec) for name, spec in (m.get("list") or {}).items()}
     if not models:
@@ -100,4 +106,14 @@ def load(path: Path | str) -> Config:
         confirm_timeout=shell.get("confirm_timeout", 300),
         fetch_max_chars=web.get("fetch_max_chars", 12000),
         search_backends=web.get("search_backends") or ["duckduckgo", "bing", "yahoo"],
+        media=MediaCfg(
+            stt_api_base=stt.get("api_base", "https://api.groq.com/openai/v1"),
+            stt_api_key=stt.get("api_key", ""),
+            stt_model=stt.get("model", "whisper-large-v3-turbo"),
+            vision_models=md.get("vision_models") or ["gemini/gemini-2.5-flash"],
+            file_max_chars=md.get("file_max_chars", 20000),
+            video_max_minutes=md.get("video_max_minutes", 60),
+            ytdlp_cookies=md.get("ytdlp_cookies", ""),
+        ),
+        inbox_dir=Path(md["inbox_dir"]) if md.get("inbox_dir") else None,
     )

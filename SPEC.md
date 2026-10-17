@@ -46,7 +46,7 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
 - `shell` di container sandbox. Daftar perintah aman jalan langsung; sisanya
   minta tombol ✅/❌. Job bisa ditandai "boleh tanpa tanya".
 
-### Fase 3 — indra
+### Fase 3 — indra ✅
 - Voice note → Groq Whisper → teks.
 - Gambar → kirim langsung kalau model vision, kalau tidak → deskripsi via helper.
 - File (PDF/DOCX/XLSX) → ekstrak teks.

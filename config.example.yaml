@@ -13,6 +13,7 @@ models:
   list:
     deepseek:
       model: deepseek/deepseek-chat       # baca DEEPSEEK_API_KEY dari env
+      # vision: false → gambar diubah jadi deskripsi dulu oleh media.vision_models
     or-free:
       # Nama model :free di OpenRouter sering berubah — cek openrouter.ai/models?q=free
       # Pilih yang support "tools".
@@ -24,6 +25,10 @@ models:
       model: openai/<nama-model-free>
       api_base: https://opencode.ai/zen/v1
       api_key: ${OPENCODE_API_KEY}
+    # Model yang bisa lihat gambar: set vision: true → gambar dikirim langsung.
+    # gemini:
+    #   model: gemini/gemini-2.5-flash    # GEMINI_API_KEY
+    #   vision: true
     # Contoh lain:
     # local:
     #   model: ollama_chat/qwen2.5:7b
@@ -53,3 +58,17 @@ shell:
   token: ${SANDBOX_TOKEN}
   timeout: 60
   confirm_timeout: 300               # detik menunggu tombol ✅/❌, lalu batal
+
+media:
+  stt:                                 # Whisper lewat endpoint OpenAI-compatible
+    api_base: https://api.groq.com/openai/v1
+    api_key: ${GROQ_API_KEY}
+    model: whisper-large-v3-turbo
+  # Pembantu deskripsi gambar untuk model non-vision. Dicoba berurutan.
+  vision_models:
+    - gemini/gemini-2.5-flash          # GEMINI_API_KEY (free tier)
+    # - openrouter/<model-vision>:free
+  file_max_chars: 20000
+  video_max_minutes: 60                # batas transkrip audio kalau video tak punya subtitle
+  ytdlp_cookies: ""                    # mis. data/cookies.txt kalau YouTube minta login
+  inbox_dir: inbox                     # salinan file kiriman user; di sandbox = /workspace/inbox

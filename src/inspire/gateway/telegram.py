@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
+import time
 import uuid
+from pathlib import Path
 from typing import Callable
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -20,11 +23,13 @@ from telegram.ext import (
 )
 
 from ..agent import Agent
+from ..media import MediaError
 from ..tools import ToolContext
 from .base import Gateway, split_text
 
 log = logging.getLogger(__name__)
 MAX_LEN = 4000  # batas Telegram 4096
+MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
 
 HELP = """Perintah:
 /new — mulai sesi baru (riwayat lama tetap bisa dicari)
@@ -41,6 +46,7 @@ class TelegramGateway(Gateway):
         allowed_user_ids: list[int],
         agent: Agent,
         confirm_timeout: int = 300,
+        inbox_dir: Path | None = None,
     ):
         if not token:
             raise ValueError("TELEGRAM_BOT_TOKEN kosong")
@@ -49,6 +55,7 @@ class TelegramGateway(Gateway):
         self.agent = agent
         self.allowed = set(allowed_user_ids)
         self.confirm_timeout = confirm_timeout
+        self.inbox_dir = inbox_dir
         self._pending: dict[str, asyncio.Future] = {}
         self._on_start: list[Callable[[], None]] = []
         self.app = (
@@ -71,6 +78,14 @@ class TelegramGateway(Gateway):
         self.app.add_handler(
             MessageHandler(only_owner & filters.TEXT & ~filters.COMMAND, self._text)
         )
+        self.app.add_handler(
+            MessageHandler(only_owner & (filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE), self._voice)
+        )
+        self.app.add_handler(
+            MessageHandler(only_owner & (filters.PHOTO | filters.Document.IMAGE), self._photo)
+        )
+        self.app.add_handler(MessageHandler(only_owner & filters.Document.ALL, self._document))
+        self.app.add_handler(MessageHandler(only_owner & filters.VIDEO, self._video))
         # Orang lain: diam, cukup catat di log.
         self.app.add_handler(MessageHandler(~only_owner, self._stranger))
 
@@ -175,12 +190,18 @@ class TelegramGateway(Gateway):
         )
         await self._reply(update, out)
 
-    async def _text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _run_agent(
+        self,
+        update: Update,
+        ctx: ContextTypes.DEFAULT_TYPE,
+        text: str,
+        images: list[tuple[bytes, str]] | None = None,
+    ) -> None:
         chat_id = str(update.effective_chat.id)
         typing = asyncio.create_task(self._keep_typing(ctx, update.effective_chat.id))
         try:
             reply = await self.agent.handle(
-                chat_id, update.effective_message.text, confirm=self.confirm_for(chat_id)
+                chat_id, text, confirm=self.confirm_for(chat_id), images=images
             )
         except Exception as e:
             log.exception("handle gagal")
@@ -191,6 +212,88 @@ class TelegramGateway(Gateway):
                 await typing
         await self._reply(update, reply)
 
+    async def _text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._run_agent(update, ctx, update.effective_message.text)
+
+    async def _download(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, file_obj) -> bytes | None:
+        if (file_obj.file_size or 0) > MAX_DOWNLOAD:
+            await self._reply(update, "⚠️ File > 20MB, Telegram tak izinkan bot mengunduhnya.")
+            return None
+        f = await ctx.bot.get_file(file_obj.file_id)
+        return bytes(await f.download_as_bytearray())
+
+    async def _voice(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        m = update.effective_message
+        obj = m.voice or m.audio or m.video_note
+        media = self.agent.media
+        if not media:
+            await self._reply(update, "⚠️ Fitur suara belum diatur.")
+            return
+        data = await self._download(update, ctx, obj)
+        if data is None:
+            return
+        name = getattr(obj, "file_name", None) or ("voice.ogg" if m.voice else "audio.mp4")
+        await ctx.bot.send_chat_action(m.chat_id, ChatAction.TYPING)
+        try:
+            transcript = await media.transcribe(data, name)
+        except MediaError as e:
+            await self._reply(update, f"⚠️ Gagal transkrip: {e}")
+            return
+        if not transcript:
+            await self._reply(update, "🎙 (tak ada suara yang terdengar)")
+            return
+        # Tampilkan transkrip supaya user tahu kalau salah dengar.
+        await self._reply(update, f"🎙 {transcript[:500]}{'…' if len(transcript) > 500 else ''}")
+        text = f"[🎙 Voice note, transkrip otomatis] {transcript}"
+        if m.caption:
+            text += f"\nKeterangan: {m.caption}"
+        await self._run_agent(update, ctx, text)
+
+    async def _photo(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        m = update.effective_message
+        if m.photo:
+            obj, mime = m.photo[-1], "image/jpeg"  # ukuran terbesar
+        else:
+            obj, mime = m.document, m.document.mime_type or "image/png"
+        data = await self._download(update, ctx, obj)
+        if data is None:
+            return
+        await self._run_agent(update, ctx, m.caption or "", images=[(data, mime)])
+
+    async def _document(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        m = update.effective_message
+        doc = m.document
+        data = await self._download(update, ctx, doc)
+        if data is None:
+            return
+        name = _safe_name(doc.file_name or "file")
+        saved = self._save_inbox(name, data)
+        where = f" — disalin ke sandbox: /workspace/inbox/{saved}" if saved else ""
+        try:
+            body = self.agent.media.extract_file(data, name) if self.agent.media else ""
+            text = f"[📎 File dari user: {name}{where}]\n{body}"
+        except MediaError as e:
+            text = f"[📎 File dari user: {name}{where}]\n(Isi tak bisa dibaca langsung: {e})"
+        if m.caption:
+            text += f"\n\nPesan user: {m.caption}"
+        await self._run_agent(update, ctx, text)
+
+    async def _video(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._reply(update, "🎬 File video belum didukung. Kirim link-nya saja (YouTube, dll).")
+
+    def _save_inbox(self, name: str, data: bytes) -> str | None:
+        """Simpan salinan file ke inbox (folder yang juga terlihat di sandbox)."""
+        if not self.inbox_dir:
+            return None
+        try:
+            self.inbox_dir.mkdir(parents=True, exist_ok=True)
+            final = f"{time.strftime('%Y%m%d-%H%M%S')}-{name}"
+            (self.inbox_dir / final).write_bytes(data)
+            return final
+        except OSError:
+            log.exception("gagal simpan ke inbox")
+            return None
+
     async def _keep_typing(self, ctx: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
         while True:
             with contextlib.suppress(Exception):
@@ -200,3 +303,8 @@ class TelegramGateway(Gateway):
     async def _stranger(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         u = update.effective_user
         log.warning("pesan dari user tak dikenal: id=%s username=%s", u and u.id, u and u.username)
+
+
+def _safe_name(name: str) -> str:
+    name = Path(name).name
+    return re.sub(r"[^\w.\-]+", "_", name)[:120] or "file"

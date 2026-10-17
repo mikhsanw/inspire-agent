@@ -63,11 +63,14 @@ class Registry:
             # Model free sering kirim JSON rusak; kasih tahu biar dia coba lagi.
             return f"Error: argumen bukan JSON valid ({e}). Kirim ulang dengan JSON benar."
         try:
+            # Cek argumen dulu, supaya TypeError dari DALAM tool tak disangka argumen salah.
+            inspect.signature(tool.fn).bind(ctx, **args)
+        except TypeError as e:
+            return f"Error: argumen salah untuk '{name}': {e}"
+        try:
             result = tool.fn(ctx, **args)
             if inspect.isawaitable(result):
                 result = await result
-        except TypeError as e:
-            return f"Error: argumen salah untuk '{name}': {e}"
         except Exception as e:  # tool gagal tidak boleh matikan loop
             log.exception("tool %s gagal", name)
             return f"Error: {type(e).__name__}: {e}"

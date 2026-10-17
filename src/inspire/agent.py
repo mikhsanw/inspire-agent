@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config
 from .llm import LLM, AllModelsFailed
+from .media import Media, MediaError, data_url
 from .memory import Memory
 from .store import Session, Store
 from .store import Job
@@ -58,8 +59,17 @@ def estimate_tokens(messages: list[dict]) -> int:
 
 
 class Agent:
-    def __init__(self, cfg: Config, store: Store, memory: Memory, llm: LLM, tools: Registry):
+    def __init__(
+        self,
+        cfg: Config,
+        store: Store,
+        memory: Memory,
+        llm: LLM,
+        tools: Registry,
+        media: Media | None = None,
+    ):
         self.cfg = cfg
+        self.media = media
         self.store = store
         self.memory = memory
         self.llm = llm
@@ -102,9 +112,21 @@ class Agent:
             system += f"\n\n## RINGKASAN OBROLAN SEBELUMNYA DI SESI INI\n{s.summary}"
         return system
 
-    def _build(self, s: Session) -> tuple[list[dict], list[tuple[int, dict]]]:
+    def _build(
+        self, s: Session, attach: dict[int, list[str]] | None = None
+    ) -> tuple[list[dict], list[tuple[int, dict]]]:
+        """attach = {id pesan: [data URL gambar]} — gambar hanya ikut di putaran ini,
+        tidak disimpan di DB (yang disimpan teks penanda)."""
         history = self.store.context_messages(s)
-        msgs = [{"role": "system", "content": self._system(s)}] + [m for _, m in history]
+        msgs = [{"role": "system", "content": self._system(s)}]
+        for mid, m in history:
+            if attach and mid in attach:
+                m = {
+                    **m,
+                    "content": [{"type": "text", "text": m["content"] or ""}]
+                    + [{"type": "image_url", "image_url": {"url": u}} for u in attach[mid]],
+                }
+            msgs.append(m)
         return msgs, history
 
     # --- ringkas --------------------------------------------------------
@@ -149,10 +171,16 @@ class Agent:
 
     # --- loop -----------------------------------------------------------
 
-    async def _run(self, s: Session, ctx: ToolContext, exclude: set[str]) -> str:
+    async def _run(
+        self,
+        s: Session,
+        ctx: ToolContext,
+        exclude: set[str],
+        attach: dict[int, list[str]] | None = None,
+    ) -> str:
         schemas = self.tools.schemas(exclude)
         for _ in range(self.cfg.max_iterations):
-            msgs, _ = self._build(s)
+            msgs, _ = self._build(s, attach)
             try:
                 reply, used = await self.llm.complete(msgs, schemas)
             except AllModelsFailed as e:
@@ -186,14 +214,42 @@ class Agent:
         self.store.touch(s.id)
         return "⚠️ Berhenti: terlalu banyak langkah tool. Coba pecah permintaannya."
 
-    async def handle(self, chat_id: str, text: str, confirm: Confirm | None = None) -> str:
+    async def _image_text(self, text: str, images: list[tuple[bytes, str]]) -> tuple[str, list[str]]:
+        """Kembalikan (teks yang disimpan, data URL untuk dilampirkan langsung)."""
+        if self.llm.models[self.llm.active].vision:
+            return f"[📷 {len(images)} gambar terlampir]\n{text}".strip(), [
+                data_url(b, mime) for b, mime in images
+            ]
+        if not self.media:
+            return f"[📷 {len(images)} gambar, tapi deskripsi gambar belum diatur]\n{text}", []
+        parts = []
+        for i, (b, mime) in enumerate(images, 1):
+            try:
+                desc = await self.media.describe_image(b, mime, hint=text)
+            except MediaError as e:
+                desc = f"(gagal dideskripsikan: {e})"
+            parts.append(f"[📷 Gambar {i} dari user — deskripsi otomatis]\n{desc}")
+        return "\n\n".join(parts) + (f"\n\nPesan user: {text}" if text else ""), []
+
+    async def handle(
+        self,
+        chat_id: str,
+        text: str,
+        confirm: Confirm | None = None,
+        images: list[tuple[bytes, str]] | None = None,
+    ) -> str:
+        """images = [(bytes, mime)]. Model vision → dilampirkan langsung; selain itu
+        diubah jadi deskripsi teks dulu (dan deskripsinya ikut tersimpan & bisa dicari)."""
+        urls: list[str] = []
+        if images:
+            text, urls = await self._image_text(text, images)
         async with self._locks[chat_id]:
             s = self.session_for(chat_id)
             content = f"{self.stamp()} {text}"
-            self.store.add_message(s.id, chat_id, {"role": "user", "content": content})
+            mid = self.store.add_message(s.id, chat_id, {"role": "user", "content": content})
             s = await self._maybe_compress(s)
             ctx = ToolContext(chat_id=chat_id, session_id=s.id, confirm=confirm)
-            return await self._run(s, ctx, exclude=set())
+            return await self._run(s, ctx, exclude=set(), attach={mid: urls} if urls else None)
 
     async def run_job(self, job: Job, confirm: Confirm | None = None) -> str:
         """Jalankan job di sesi terpisah (kind='job'), kembalikan teks untuk user."""

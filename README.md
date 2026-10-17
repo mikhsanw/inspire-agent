@@ -1,7 +1,7 @@
 # inspire
 
 Agent AI pribadi ala Hermes. Telegram, memori jangka panjang, model apa saja.
-Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 2 (jadwal, web, shell sandbox)**.
+Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 3 (suara, gambar, file, video)**.
 
 ## Jalan
 
@@ -11,7 +11,8 @@ Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 2 (jadwal, web, shell sandbo
    cp .env.example .env
    cp config.example.yaml config.yaml
    ```
-   Isi `.env` (token, user ID, API key, `SANDBOX_TOKEN` dari `openssl rand -hex 24`).
+   Isi `.env` (token, user ID, API key, `SANDBOX_TOKEN` dari `openssl rand -hex 24`,
+   `GROQ_API_KEY` untuk suara, `GEMINI_API_KEY` untuk deskripsi gambar).
    Sesuaikan nama model di `config.yaml`.
 3. Jalankan:
    ```bash
@@ -36,6 +37,17 @@ Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 2 (jadwal, web, shell sandbo
 - "tiap Senin jam 8 rangkum berita AI" → jadwal cron + web
 - "cek isi folder workspace" → shell langsung jalan
 - "buat file catatan.txt" → shell minta tombol ✅/❌ dulu
+- kirim voice note → ditranskrip (Groq Whisper), transkrip ditampilkan, lalu dijawab
+- kirim foto struk → model vision lihat langsung, atau dideskripsikan dulu (Gemini)
+- kirim PDF/DOCX/XLSX → teks diekstrak; salinan file ada di sandbox `/workspace/inbox`
+- "ringkas video ini <link>" → subtitle via yt-dlp, kalau tak ada → audio → Whisper
+
+## YouTube minta login?
+
+YouTube sering memblokir IP VPS ("Sign in to confirm you're not a bot").
+Ekspor cookies dari browser (ekstensi "Get cookies.txt LOCALLY"), simpan di
+`data/cookies.txt`, lalu set `media.ytdlp_cookies: data/cookies.txt`.
+Pakai akun cadangan, bukan akun utama.
 
 ## Keamanan shell
 
@@ -70,6 +82,7 @@ src/inspire/
   config.py       config.yaml + ${ENV}
   scheduler.py    APScheduler + tabel jobs
   sandbox_server.py  server exec di container sandbox
-  tools/          core, schedule, web, shell
+  media.py        STT, deskripsi gambar, ekstrak file, transkrip video
+  tools/          core, schedule, web, shell, video
   gateway/        base + telegram (tombol konfirmasi)
 ```

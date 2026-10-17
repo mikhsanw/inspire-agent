@@ -13,6 +13,7 @@ def build(config_path: str | Path):
     from . import config as config_mod
     from .agent import Agent
     from .llm import LLM
+    from .media import Media
     from .memory import Memory
     from .store import Store
     from .scheduler import Scheduler
@@ -20,6 +21,7 @@ def build(config_path: str | Path):
     from .tools.core import register_core
     from .tools.schedule import register_schedule
     from .tools.shell import register_shell
+    from .tools.video import register_video
     from .tools.web import register_web
 
     load_dotenv()
@@ -36,7 +38,9 @@ def build(config_path: str | Path):
         register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout)
     else:
         logging.getLogger(__name__).warning("shell.sandbox_url kosong → tool shell mati")
-    agent = Agent(cfg, store, memory, llm, tools)
+    media = Media(cfg.media)
+    register_video(tools, media)
+    agent = Agent(cfg, store, memory, llm, tools, media)
     scheduler = Scheduler(store, agent)
     register_schedule(tools, store, scheduler)
     return cfg, agent, scheduler
@@ -52,7 +56,9 @@ def main() -> None:
     from .gateway.telegram import TelegramGateway
 
     cfg, agent, scheduler = build(os.environ.get("INSPIRE_CONFIG", "config.yaml"))
-    gw = TelegramGateway(cfg.telegram_token, cfg.allowed_user_ids, agent, cfg.confirm_timeout)
+    gw = TelegramGateway(
+        cfg.telegram_token, cfg.allowed_user_ids, agent, cfg.confirm_timeout, cfg.inbox_dir
+    )
     scheduler.attach(gw.send, gw.confirm_for)
     gw.on_start(scheduler.start)
     gw.run()

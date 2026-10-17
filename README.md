@@ -243,8 +243,8 @@ Nama model selalu valid, tanpa preset buatan tangan yang bisa basi. Katalog di-c
 
 **Memilih** (`inspire setup model`, atau `/setup` → Model AI di Telegram):
 
-1. **Penyedia**: 12 yang populer (OpenRouter, DeepSeek, Google, Groq, Cerebras, Mistral, NVIDIA, OpenAI,
-   Anthropic, xAI, Together, Fireworks), atau ketik nama untuk mencari penyedia lain,
+1. **Penyedia**: 13 yang populer (OpenRouter, DeepSeek, Google, Groq, Cerebras, Mistral, NVIDIA, OpenAI,
+   Anthropic, xAI, Together, Fireworks, OpenCode), atau ketik nama untuk mencari penyedia lain,
    atau **Endpoint sendiri** (Ollama, LM Studio, vLLM, server OpenAI-compatible).
 2. **Key**: ditempel, **dites dulu**, baru disimpan. Key yang sudah ada dipakai ulang (Groq yang sama
    dengan fitur suara, Gemini yang sama dengan fitur gambar).
@@ -258,9 +258,16 @@ Kalau tes gagal, penyebabnya dijelaskan dan **hanya bagian yang salah** yang dit
 tempel ulang key; nama model salah → daftar terbuka lagi).
 
 **Soal "gratis".** Katalog tidak bisa menandai free tier (Gemini dan Groq tercatat berharga normal),
-sedangkan `$0` sering berarti langganan atau terkunci. Penyedia langganan dan tier gratis OpenCode
-(hanya berlaku di dalam aplikasi OpenCode) disembunyikan. `$0` ditampilkan apa adanya; syarat, batas,
-dan kebijakan data tiap model gratis ditentukan penyedianya. **Untuk data sensitif, jangan pakai model gratis.**
+sedangkan `$0` sering berarti langganan atau terkunci. `$0` ditampilkan apa adanya; syarat, batas,
+dan kebijakan data tiap model gratis ditentukan penyedianya. Yang tidak ditampilkan: penyedia langganan,
+penyedia dengan login OAuth (GitHub Copilot), dan model yang jalur API-nya belum kita dukung (katalog
+menandai jalur per model; kita mendukung OpenAI-compatible dan Anthropic). **Untuk data sensitif, jangan pakai model gratis.**
+
+**OpenCode.** Model **gratis** OpenCode (`-free`) terkunci ke aplikasi OpenCode sendiri: servernya menolak panggilan
+dari aplikasi lain, jadi tidak ditampilkan. Model **berbayar** OpenCode (pakai saldo di
+[opencode.ai/console](https://opencode.ai/console), bayar sesuai pemakaian) ditampilkan: server mereka menerima
+panggilannya lewat jalur OpenAI-compatible maupun Anthropic. Yang sudah dicek hanya bahwa request diterima dan key
+divalidasi; **belum teruji sukses dengan key berisi saldo**, jadi mulailah dengan top-up kecil.
 Gambaran biaya: agent pribadi dengan model murah kelas DeepSeek Flash ($0,15/$0,6 per juta token)
 biasanya kurang dari $1 per bulan.
 

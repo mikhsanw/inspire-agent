@@ -86,8 +86,10 @@ Tanpa GitHub (push tetap di luar cakupan). Hanya sandbox: tool server/DB/jadwal 
 ### Fase 7 — sistem model ✅
 
 - **Katalog models.dev** (seperti OpenCode) menggantikan preset buatan tangan: pilih penyedia → key (dites dulu, baru
-  disimpan) → model dengan pencarian, filter $0, urutan; konteks, harga, vision tercatat di setelan. Penyedia
-  langganan / tier gratis terkunci disembunyikan. "Gratis" tidak disimpulkan dari katalog.
+  disimpan) → model dengan pencarian, filter $0, urutan; konteks, harga, vision tercatat di setelan. Jalur API
+  dihitung PER MODEL (OpenAI-compatible dan Anthropic didukung; /responses dan SDK khusus disembunyikan).
+  Penyedia langganan / OAuth disembunyikan. OpenCode: hanya model berbayar (gratis terkunci ke aplikasinya).
+  "Gratis" tidak disimpulkan dari katalog.
 - **Fallback tangguh** (seperti Hermes: timeout per model, rantai): cooldown eksponensial untuk limit/server, blokir
   30 menit untuk key/nama model/diblokir, batas waktu per model + total rantai, status di `/model`,
   anggaran konteks per model, catatan "dijawab oleh".

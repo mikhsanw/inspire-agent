@@ -145,7 +145,7 @@ def test_pick_provider_number_search_custom_skip(monkeypatch, cat):
     assert wizard._pick_provider(cat) == "custom"
     script(monkeypatch, ["0"])
     assert wizard._pick_provider(cat) is None
-    script(monkeypatch, ["opencode", "lm studio"])          # terkunci: tak ada hasil; lalu ketemu satu
+    script(monkeypatch, ["merge", "lm studio"])             # SDK khusus: tak ada hasil; lalu ketemu satu
     assert wizard._pick_provider(cat).id == "lmstudio"
 
 
@@ -336,3 +336,13 @@ async def test_tg_provider_search_custom_and_ttl(tg, tested, monkeypatch):
     real = time.time()
     monkeypatch.setattr(time, "time", lambda: real + 700)
     assert not setup.is_waiting("1")
+
+
+async def test_add_opencode_paid_model_uses_its_own_route(tmp_path, cat, tested):
+    s = Settings(tmp_path)
+    oc = cat.get("opencode")
+    ok, _ = await S.add_catalog_model(s, oc, oc.models["claude-haiku-4-5"], key="sk-zen")
+    spec = s.get("models.list")["opencode-claude-haiku-4-5"]
+    assert ok and spec["model"] == "anthropic/claude-haiku-4-5" and spec["api_base"] == "https://opencode.ai/inference/anthropic"
+    assert spec["api_key"] == "${OPENCODE_API_KEY}" and s.key("OPENCODE_API_KEY") == "sk-zen"
+    assert tested.specs[0]["api_key"] == "sk-zen"

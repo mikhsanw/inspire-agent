@@ -263,9 +263,11 @@ class TelegramSetup:
         if prov.key_required and not self.settings.key(prov.key_env):
             self.waiting[chat_id] = {"kind": "model_key", "prov": pid}
             url = catalog_mod.KEY_URL.get(pid, f"situs {prov.name}")
+            note = catalog_mod.NOTES.get(pid)
             return await self._show(
-                update, f"🔑 Tempel key {prov.name} di pesan berikutnya.\nAmbil di: {url}\n\n"
-                "Pesanmu akan kuhapus segera setelah dibaca.", kb([("⬅ Penyedia", "su:sec:model"), BACK]))
+                update, (f"ℹ️ {note}\n\n" if note else "") + f"🔑 Tempel key {prov.name} di pesan berikutnya.\n"
+                f"Ambil di: {url}\n\nPesanmu akan kuhapus segera setelah dibaca.",
+                kb([("⬅ Penyedia", "su:sec:model"), BACK]))
         await self._model_list(update, chat_id, {"kind": "catalog", "prov": pid, "key": "", "query": "",
                                                  "free": False, "sort": "baru", "page": 0})
 
@@ -277,7 +279,8 @@ class TelegramSetup:
         st["page"] = min(st["page"], pages - 1)
         start = st["page"] * PAGE
         view = items[start:start + PAGE]
-        head = (f"{prov.name} · {len(items)} model · urut {catalog_mod.SORTS[st['sort']]}"
+        note = catalog_mod.NOTES.get(st["prov"])
+        head = ((f"ℹ️ {note}\n\n" if note else "") + f"{prov.name} · {len(items)} model · urut {catalog_mod.SORTS[st['sort']]}"
                 + (" · hanya $0" if st["free"] else "") + (f" · cari '{st['query']}'" if st["query"] else ""))
         lines = [f"{start + i + 1}. {m.label()}" for i, m in enumerate(view)] or ["(tak ada yang cocok)"]
         text = (f"{head}\n\n" + "\n".join(lines) +

@@ -171,7 +171,7 @@ def _pick_provider(cat):
     popular = cat.popular() if cat else []
     for i, p in enumerate(popular, 1):
         free = len(cat.models(p.id, free=True))
-        note = f"{free} model $0" if free else ""
+        note = f"{free} model $0" if free else ("berbayar" if p.id in catalog_mod.LOCKED_FREE else "")
         say(f"  {i:>2}) {p.name}{c('   ' + note, '2') if note else ''}")
     say(c("   e) Endpoint sendiri (Ollama, LM Studio, vLLM, …)    0) Lewati", "2"))
     say(c("   atau ketik nama penyedia lain untuk mencari (ada ±230)", "2"))
@@ -253,6 +253,8 @@ def _fix_loop(s: Settings, label: str, attempt, on_model=None, on_key=None) -> b
 
 def _setup_catalog(s: Settings, cat, prov) -> bool:
     state = {"key": ""}
+    if note := catalog_mod.NOTES.get(prov.id):
+        say(c(note, "33"))
     if prov.key_required:
         have = bool(s.key(prov.key_env))
         if have:

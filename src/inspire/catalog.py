@@ -27,10 +27,11 @@ log = logging.getLogger(__name__)
 
 URL = "https://models.dev/api.json"
 MAX_AGE = 24 * 3600
+CACHE_VERSION = 2   # naikkan kalau bentuk data cache berubah → cache lama otomatis diambil ulang
 
 # Urutan tampil di pilihan penyedia.
 POPULAR = ["openrouter", "deepseek", "google", "groq", "cerebras", "mistral", "nvidia",
-           "openai", "anthropic", "xai", "togetherai", "fireworks-ai"]
+           "openai", "anthropic", "xai", "togetherai", "fireworks-ai", "opencode"]
 # litellm punya integrasi asli untuk ini (menangani kekhasan tiap API). Selain itu, penyedia
 # yang punya URL API OpenAI-compatible dipakai lewat jalur generik openai/<model> + api_base.
 NATIVE = {"openrouter": "openrouter", "deepseek": "deepseek", "google": "gemini", "groq": "groq",
@@ -41,6 +42,7 @@ NATIVE = {"openrouter": "openrouter", "deepseek": "deepseek", "google": "gemini"
 KEY_ENV = {"google": "GEMINI_API_KEY"}
 # Halaman untuk mengambil key (petunjuk; tak ada di katalog).
 KEY_URL = {
+    "opencode": "https://opencode.ai/console",
     "openrouter": "https://openrouter.ai/keys", "deepseek": "https://platform.deepseek.com/api_keys",
     "google": "https://aistudio.google.com/apikey", "groq": "https://console.groq.com/keys",
     "cerebras": "https://cloud.cerebras.ai/", "mistral": "https://console.mistral.ai/api-keys",
@@ -48,9 +50,21 @@ KEY_URL = {
     "anthropic": "https://console.anthropic.com/settings/keys", "xai": "https://console.x.ai/",
     "togetherai": "https://api.together.ai/settings/api-keys", "fireworks-ai": "https://fireworks.ai/account/api-keys",
 }
-HIDDEN = {"opencode", "opencode-go"}
+# Tak bisa dipakai dengan cara kita: langganan (opencode-go) atau login OAuth, bukan API key.
+HIDDEN = {"opencode-go", "github-copilot"}
+# Penyedia yang model "$0"-nya terkunci ke aplikasinya sendiri: hanya model berbayarnya yang tampil.
+LOCKED_FREE = {"opencode"}
+# Catatan yang ditampilkan saat penyedia dipilih.
+NOTES = {
+    "opencode": ("OpenCode (Zen): hanya model BERBAYAR yang tampil — pakai saldo di opencode.ai/console. Model "
+                 "gratis (-free) terkunci ke aplikasi OpenCode. Jalurnya sudah dicek menerima request, tapi "
+                 "belum teruji sukses dengan key berisi saldo."),
+}
+OPENAI_COMPAT = "@ai-sdk/openai-compatible"
+ANTHROPIC = "@ai-sdk/anthropic"
 HIDDEN_PARTS = ("-plan", "token-plan", "coding-plan")  # langganan: bukan API umum
-HIDDEN_NOTE = "Penyedia langganan / tier gratis terkunci ke aplikasinya sendiri tidak ditampilkan."
+HIDDEN_NOTE = ("Penyedia langganan / login OAuth tidak ditampilkan, begitu pula penyedia yang jalur API-nya "
+               "belum didukung.")
 
 SORTS = {"baru": "terbaru", "harga": "termurah", "konteks": "konteks terbesar"}
 
@@ -67,6 +81,8 @@ class CModel:
     vision: bool = False
     released: str = ""
     status: str = ""                 # "", beta, alpha, deprecated
+    npm: str = ""                    # jalur API KHUSUS model ini (bila beda dari penyedia)
+    api: str = ""
 
     @property
     def free(self) -> bool:
@@ -91,6 +107,7 @@ class CProvider:
     name: str
     env: list[str] = field(default_factory=list)
     api: str | None = None
+    npm: str = ""
     models: dict[str, CModel] = field(default_factory=dict)
 
     @property
@@ -124,11 +141,24 @@ class Resolved:
 
 
 def resolve(provider: CProvider, model: CModel) -> Resolved | None:
-    """Petakan (penyedia, model) katalog → parameter litellm. None = tak bisa dipakai."""
+    """Petakan (penyedia, model) katalog → parameter litellm. None = tak bisa dipakai.
+
+    Penyedia dengan integrasi asli litellm (NATIVE) menangani semua modelnya sendiri. Selain itu
+    katalog menandai jalur API PER MODEL (mis. OpenCode: sebagian OpenAI-compatible, sebagian
+    Anthropic, sebagian /responses). Yang kita dukung: openai-compatible dan anthropic; sisanya
+    (jalur /responses, SDK khusus) disembunyikan daripada ditawarkan lalu gagal."""
     if provider.id in NATIVE:
         return Resolved(f"{NATIVE[provider.id]}/{model.id}", None, provider.key_env, True)
-    if provider.api:
-        return Resolved(f"openai/{model.id}", provider.api, provider.key_env, provider.key_required)
+    npm = model.npm or provider.npm
+    api = model.api or provider.api
+    if not api:
+        return None
+    if npm in ("", OPENAI_COMPAT):
+        return Resolved(f"openai/{model.id}", api, provider.key_env, provider.key_required)
+    if npm == ANTHROPIC:
+        # litellm menambahkan /v1/messages sendiri; URL katalog (gaya AI SDK) berakhiran /v1.
+        base = api[:-3] if api.rstrip("/").endswith("/v1") else api
+        return Resolved(f"anthropic/{model.id}", base.rstrip("/"), provider.key_env, True)
     return None
 
 
@@ -142,7 +172,7 @@ class Catalog:
 
     def popular(self) -> list[CProvider]:
         return [self.providers[p] for p in POPULAR
-                if p in self.providers and self.providers[p].models and self.providers[p].supported]
+                if p in self.providers and self.providers[p].supported and self.models(p)]
 
     def search_providers(self, query: str) -> list[CProvider]:
         toks = query.lower().split()
@@ -150,6 +180,7 @@ class Catalog:
             p for p in self.providers.values()
             if p.supported and not p.hidden and p.models
             and all(t in p.id.lower() or t in p.name.lower() for t in toks)
+            and self.models(p.id)                            # minimal satu model yang bisa dipakai
         ]
         return sorted(found, key=lambda p: (p.id not in POPULAR, p.name.lower()))
 
@@ -159,10 +190,13 @@ class Catalog:
         if not prov:
             return []
         toks = query.lower().split()
+        locked = pid in LOCKED_FREE
         out = [
             m for m in prov.models.values()
             if (deprecated or m.status != "deprecated")
             and (not free or m.free)
+            and not (locked and m.free)                      # model "$0" terkunci → tak ditawarkan
+            and resolve(prov, m) is not None                 # jalur API-nya harus kita dukung
             and all(t in m.id.lower() or t in m.name.lower() for t in toks)
         ]
         if sort == "harga":
@@ -196,8 +230,14 @@ def compact(raw: dict) -> dict:
                 "v": "image" in ((m.get("modalities") or {}).get("input") or []),
                 "r": m.get("release_date") or "", "s": m.get("status") or "",
             }
+            ov = m.get("provider") or {}
+            if ov.get("npm"):
+                models[mid]["x"] = ov["npm"]
+            if ov.get("api"):
+                models[mid]["a"] = ov["api"]
         if models:
-            out[pid] = {"name": p.get("name") or pid, "env": p.get("env") or [], "api": p.get("api"), "models": models}
+            out[pid] = {"name": p.get("name") or pid, "env": p.get("env") or [], "api": p.get("api"),
+                        "npm": p.get("npm") or "", "models": models}
     return out
 
 
@@ -205,16 +245,19 @@ def parse(data: dict, fetched: float = 0) -> Catalog:
     providers = {}
     for pid, p in data.items():
         models = {
-            mid: CModel(mid, m["n"], pid, m["c"], m["o"], m["i"], m["p"], m["v"], m["r"], m["s"])
+            mid: CModel(mid, m["n"], pid, m["c"], m["o"], m["i"], m["p"], m["v"], m["r"], m["s"],
+                        m.get("x", ""), m.get("a", ""))
             for mid, m in p["models"].items()
         }
-        providers[pid] = CProvider(pid, p["name"], p["env"], p["api"], models)
+        providers[pid] = CProvider(pid, p["name"], p["env"], p["api"], p.get("npm", ""), models)
     return Catalog(providers, fetched)
 
 
 def _read(cache: Path) -> tuple[dict, float] | None:
     try:
         blob = json.loads(cache.read_text(encoding="utf-8"))
+        if blob.get("version") != CACHE_VERSION:
+            return None
         return blob["providers"], float(blob["fetched"])
     except (OSError, ValueError, KeyError):
         return None
@@ -224,7 +267,7 @@ def _write(cache: Path, providers: dict) -> None:
     cache.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=cache.parent, prefix=".catalog-")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"fetched": time.time(), "providers": providers}, f, separators=(",", ":"))
+        json.dump({"version": CACHE_VERSION, "fetched": time.time(), "providers": providers}, f, separators=(",", ":"))
     os.replace(tmp, cache)
 
 

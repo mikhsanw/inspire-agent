@@ -152,7 +152,8 @@ class DiscordGateway(Gateway):
 
         if content.startswith(self.cmd):
             name, *args = content[len(self.cmd):].split()
-            await self._reply(message, await command(self.app, chat_id, name, args, self.cmd))
+            await self._reply(message, await command(self.app, chat_id, name, args, self.cmd,
+                                                     confirm=lambda t: self.confirm(chat_id, t)))
             return
 
         images: list[tuple[bytes, str]] = []

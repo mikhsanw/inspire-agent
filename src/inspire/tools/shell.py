@@ -70,6 +70,21 @@ def needs_confirm(command: str) -> str | None:
     return None
 
 
+def is_readonly(command: str) -> bool:
+    """Semua segmen hanya perintah baca (SAFE) → tak perlu masuk jurnal."""
+    command = command.replace("2>&1", "")
+    if any(t in command for t in (">", "`", "$(", "<(")):
+        return False
+    for seg in SPLIT.split(command):
+        try:
+            words = shlex.split(seg.strip())
+        except ValueError:
+            return False
+        if words and (words[0] not in SAFE or (words[0] == "find" and FIND_RISKY & set(words))):
+            return False
+    return True
+
+
 class Grants:
     """Izin sementara per chat: semua perintah sandbox jalan tanpa tombol."""
 
@@ -89,7 +104,8 @@ class Grants:
 
 
 def register_shell(
-    reg: Registry, url: str, token: str, timeout: int = 60, grants: Grants | None = None
+    reg: Registry, url: str, token: str, timeout: int = 60, grants: Grants | None = None,
+    journal=None,
 ) -> None:
     grants = grants or Grants()
 
@@ -117,6 +133,10 @@ def register_shell(
             return f"Error: sandbox HTTP {resp.status_code}: {resp.text[:200]}"
         r = resp.json()
         out = [f"exit_code: {r['exit_code']}" + (" (timeout)" if r.get("timed_out") else "")]
+        if journal and not is_readonly(command):
+            n = journal.add(ctx.chat_id, "sandbox", "shell", command[:300],
+                            status="ok" if r["exit_code"] == 0 else f"exit {r['exit_code']}")
+            out[0] += f" [jurnal #{n}, tak bisa dibatalkan otomatis]"
         if r.get("stdout"):
             out.append(f"stdout:\n{r['stdout'][-8000:]}")
         if r.get("stderr"):

@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 - [Suara, gambar, file, video](#suara-gambar-file-video)
 - [Coding](#coding)
 - [Web di server](#web-di-server)
+- [Jurnal & rollback](#jurnal--rollback)
 - [Gaya jawaban (caveman)](#gaya-jawaban-caveman)
 - [Shell & keamanan](#shell--keamanan)
 - [Data & backup](#data--backup)
@@ -49,6 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 | 🖥 | **Shell sandbox** | Perintah jalan di container terpisah. Yang berisiko minta tombol ✅/❌ |
 | 👩‍💻 | **Coding** | Tulis, jalankan, tes, dan perbaiki kode di sandbox tanpa tombol bertubi-tubi. Hasil dikirim sebagai file |
 | 🛠 | **Web di server** | Baca log, kode, dan database web Laravel/PHP di servermu; perubahan tampil sebagai diff → ✅, dengan snapshot & rollback |
+| 📒 | **Jurnal & rollback** | Setiap aksi yang mengubah sesuatu dicatat; `/rollback <nomor>` untuk mundur |
 | 🪨 | **Gaya caveman** | Jawaban super singkat untuk hal ringan (hemat token), normal untuk penjelasan |
 | 🎙 | **Suara** | Voice note → teks (Groq Whisper, gratis) |
 | 🖼 | **Gambar** | Dilihat langsung oleh model vision, atau dideskripsikan dulu (Gemini, gratis) |
@@ -211,6 +213,8 @@ Telegram pakai `/`, Discord pakai `!`.
 | `/skillundo` | Batalkan perubahan skill terakhir |
 | `/caveman auto\|on\|off` | Gaya jawaban |
 | `/kunci` | Cabut izin "semua perintah sandbox 30 menit" |
+| `/riwayat [n]` | Jurnal kerja agent |
+| `/rollback <nomor>` | Batalkan satu aksi dari jurnal (lewat ✅) |
 | `/help` | Bantuan |
 
 ### Perintah server
@@ -350,6 +354,32 @@ inspire setup web
 
 > ⚠️ Tombolmu berdampak nyata ke web live. Baca diff dan perintahnya sebelum menekan ✅.
 
+## Jurnal & rollback
+
+Setiap aksi agent yang **mengubah** sesuatu dicatat di jurnal (`data/inspire.db`):
+
+```
+/riwayat
+#14 17/10 14:05 🖥 server:izin · ubah app/Http/Controllers/PengajuanController.php ⏪ bisa
+#13 17/10 14:04 🗄 db:izin · SELECT status, count(*) FROM pengajuan GROUP BY status
+#12 17/10 14:02 🖥 server:izin · php artisan optimize:clear
+#11 17/10 13:50 🧪 sandbox · ubah /workspace/bmi/main.py ⏪ bisa
+```
+
+| Aksi | Dicatat | `/rollback` |
+|---|---|---|
+| Ubah/buat file di server (`host_edit`, `host_write`) | ✅ | ✅ snapshot git / salinan file |
+| Perintah mengubah di situs git (`host_run`) | ✅ | ✅ file kembali; **efek lain (migrasi DB, paket) tidak** |
+| Tulis/edit file di sandbox | ✅ | ✅ isi lama disimpan (maks 1MB), file baru dihapus |
+| Perintah sandbox selain baca | ✅ | ❌ hanya catatan |
+| Reload/restart layanan, `SELECT` ke DB | ✅ (jejak audit) | ❌ |
+| Perintah baca (`ls`, `cat`, `git status`) | — | — |
+
+Rollback selalu lewat tombol ✅ dan dicatat sebagai entri baru. Di situs git, rollback
+mengembalikan **semua** file terlacak ke kondisi sebelum aksi itu, jadi perubahan
+sesudahnya ikut batal (dijelaskan di tombol konfirmasi). Agent juga bisa membaca jurnal
+(tool `riwayat_kerja`), jadi kamu bisa bertanya "kemarin kamu ubah apa saja?".
+
 ## Gaya jawaban (caveman)
 
 `/caveman auto` (bawaan): obrolan ringan dan jawaban singkat ala caveman, penjelasan
@@ -487,6 +517,7 @@ src/inspire/
   scheduler.py       APScheduler
   media.py           STT, deskripsi gambar, ekstrak file, transkrip video
   skills.py          skill markdown + git
+  journal.py         jurnal aksi + rollback
   sandbox_server.py  server exec + file di container sandbox (stdlib)
   skills_builtin/    skill bawaan: coding, web-laravel
   setup/             bagian setup, tes key, status, wizard terminal

@@ -85,3 +85,28 @@ def register_core(reg: Registry, memory: Memory, store: Store) -> None:
             fn=search_history,
         )
     )
+
+
+def register_journal(reg: Registry, journal) -> None:
+    def riwayat_kerja(ctx: ToolContext, limit: int = 15, place: str = "") -> str:
+        items = journal.recent(min(limit, 50), place or None)
+        return "\n".join(e.line() for e in items) or "Jurnal masih kosong."
+
+    reg.add(
+        Tool(
+            name="riwayat_kerja",
+            description=(
+                "Lihat jurnal aksimu yang mengubah sesuatu (file/perintah di sandbox & server, query DB), "
+                "terbaru dulu. Pakai untuk menjawab 'tadi/kemarin kamu ubah apa?'. User membatalkan "
+                "dengan /rollback <nomor>; sebutkan nomornya kalau relevan."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "default": 15},
+                    "place": {"type": "string", "enum": ["", "sandbox", "server", "db"]},
+                },
+            },
+            fn=riwayat_kerja,
+        )
+    )

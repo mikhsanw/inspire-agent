@@ -33,7 +33,7 @@ def _hhmm(ts: float) -> str:
 MAX_LEN = 4000  # batas Telegram 4096
 MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
 COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status",
-            "caveman", "kunci"]
+            "caveman", "kunci", "riwayat", "rollback"]
 
 
 class TelegramGateway(Gateway):
@@ -146,7 +146,9 @@ class TelegramGateway(Gateway):
 
     async def _command(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         name = update.effective_message.text.split()[0].lstrip("/").split("@")[0]
-        out = await command(self.app, str(update.effective_chat.id), name, ctx.args or [], "/")
+        chat_id = str(update.effective_chat.id)
+        out = await command(self.app, chat_id, name, ctx.args or [], "/",
+                            confirm=lambda t: self.confirm(chat_id, t))
         await self._reply(update, out)
 
     async def _setup(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:

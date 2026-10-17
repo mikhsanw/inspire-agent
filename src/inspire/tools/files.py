@@ -40,7 +40,16 @@ class Sandbox:
         return data
 
 
-def register_files(reg: Registry, sb: Sandbox, outbox: Outbox) -> None:
+async def _before(sb: Sandbox, path: str) -> tuple[bytes | None, bool]:
+    """Isi file sebelum diubah (untuk jurnal). → (isi, file_baru)."""
+    try:
+        r = await sb.call("download", path=path)
+    except RuntimeError as e:
+        return None, "tidak ada" in str(e)
+    return base64.b64decode(r["data"]), False
+
+
+def register_files(reg: Registry, sb: Sandbox, outbox: Outbox, journal=None) -> None:
     async def read_file(ctx: ToolContext, path: str, offset: int = 1, limit: int = 400) -> str:
         try:
             r = await sb.call("read", path=path, offset=offset, limit=limit)
@@ -53,18 +62,31 @@ def register_files(reg: Registry, sb: Sandbox, outbox: Outbox) -> None:
         return f"{r['path']} (baris {r['offset']}–{end} dari {r['total']})\n{body}{more}"
 
     async def write_file(ctx: ToolContext, path: str, content: str) -> str:
+        old, new_file = await _before(sb, path) if journal else (None, False)
         try:
             r = await sb.call("write", path=path, content=content)
         except RuntimeError as e:
             return f"Error: {e}"
-        return f"{'Dibuat' if r['created'] else 'Ditimpa'}: {r['path']} ({r['bytes']} byte)"
+        jid = ""
+        if journal:
+            n = journal.add(ctx.chat_id, "sandbox", "write_file",
+                            f"{'buat' if r['created'] else 'tulis ulang'} {r['path']}",
+                            path=r["path"], backup=old, created=r["created"])
+            jid = f" [jurnal #{n}]"
+        return f"{'Dibuat' if r['created'] else 'Ditimpa'}: {r['path']} ({r['bytes']} byte){jid}"
 
     async def edit_file(ctx: ToolContext, path: str, old: str, new: str, replace_all: bool = False) -> str:
+        before, _ = await _before(sb, path) if journal else (None, False)
         try:
             r = await sb.call("edit", path=path, old=old, new=new, replace_all=replace_all)
         except RuntimeError as e:
             return f"Error: {e}"
-        return f"Diubah: {r['path']} ({r['replaced']} tempat)"
+        jid = ""
+        if journal:
+            n = journal.add(ctx.chat_id, "sandbox", "edit_file", f"ubah {r['path']}",
+                            path=r["path"], backup=before)
+            jid = f" [jurnal #{n}]"
+        return f"Diubah: {r['path']} ({r['replaced']} tempat){jid}"
 
     async def list_files(ctx: ToolContext, path: str = "/workspace", depth: int = 2) -> str:
         try:

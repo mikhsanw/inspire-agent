@@ -19,6 +19,7 @@ import io
 import logging
 import posixpath
 import re
+import secrets
 import shlex
 import time
 
@@ -138,11 +139,16 @@ async def _exec(argv: list[str], stdin: bytes | None, timeout: int,
     return p.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
+# <waktu>-<acak>: dua aksi di detik yang sama tak boleh saling menimpa snapshot.
+SNAPSHOT = re.compile(r"(git|file):\d{8}-\d{6}(-[0-9a-f]{4})?")
+
+
 class Sites:
     """Akses per situs: path dikurung di root situs, rahasia disamarkan."""
 
-    def __init__(self, host: Host, sites: list[dict]):
+    def __init__(self, host: Host, sites: list[dict], journal=None):
         self.host = host
+        self.journal = journal  # inspire.journal.Journal, opsional
         self.sites = {s["name"]: s for s in sites}
         self._secrets: dict[str, tuple[float, dict[str, str]]] = {}
 
@@ -201,7 +207,7 @@ class Sites:
     async def snapshot(self, site: dict, files: list[str] = ()) -> str:
         """git → refs/inspire/<ts>. Bukan git → salin file yang akan diubah."""
         root = shlex.quote(site["path"].rstrip("/"))
-        ts = time.strftime("%Y%m%d-%H%M%S")
+        ts = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
         copies = " ".join(
             f'[ -e {shlex.quote(f)} ] && mkdir -p "$b/$(dirname {shlex.quote(posixpath.relpath(f, site["path"]))})" '
             f'&& cp -p {shlex.quote(f)} "$b/{posixpath.relpath(f, site["path"])}";'
@@ -215,6 +221,17 @@ class Sites:
         )
         code, out, err = await self.owner_run(site, script)
         return out.strip().splitlines()[-1] if code == 0 and out.strip() else f"gagal ({err.strip()[:100]})"
+
+
+    async def restore(self, site: dict, snapshot: str) -> tuple[int, str, str]:
+        """git:<ts> → semua file terlacak kembali ke snapshot; file:<ts> → salinan dikembalikan."""
+        kind, _, ts = snapshot.partition(":")
+        root = shlex.quote(site["path"].rstrip("/"))
+        if kind == "git":
+            script = f"cd {root} && git checkout refs/inspire/{ts} -- . && git status --short | head -30"
+        else:
+            script = f"cp -rp $HOME/.inspire-backup/{shlex.quote(site['name'])}/{ts}/. {root}/ && echo dikembalikan"
+        return await self.owner_run(site, script)
 
 
 def register_host(reg: Registry, sites: Sites) -> None:
@@ -247,7 +264,13 @@ def register_host(reg: Registry, sites: Sites) -> None:
         out = await sites.redact(st, out[-10000:], secret)
         err = await sites.redact(st, err[-4000:], secret)
         res = [f"exit_code: {code}"]
-        if snap:
+        if snap and sites.journal:
+            # Snapshot "file:" tanpa file tak bisa memulihkan apa pun → hanya git yang dicatat.
+            n = sites.journal.add(ctx.chat_id, "server", "host_run", command[:300], site=site,
+                                  snapshot=snap if snap.startswith("git:") else "", status="ok" if code == 0 else f"exit {code}")
+            res.append(f"jurnal #{n} (file bisa dikembalikan dengan /rollback {n}; efek lain seperti "
+                       "migrasi DB tidak)" if snap.startswith("git:") else f"jurnal #{n}")
+        elif snap:
             res.append(f"snapshot: {snap} (host_rollback untuk kembali)")
         if out.strip():
             res.append(f"stdout:\n{out}")
@@ -295,7 +318,13 @@ def register_host(reg: Registry, sites: Sites) -> None:
         code, _, err = await sites.owner_run(st, script, stdin=new.encode())
         if code != 0:
             return f"Error menulis: {err.strip()}"
-        return f"Tersimpan: {full}. snapshot: {snap} (host_rollback untuk kembali)"
+        jid = ""
+        if sites.journal:
+            rel = posixpath.relpath(full, st["path"])
+            n = sites.journal.add(ctx.chat_id, "server", "host_edit",
+                                  f"{'buat' if old_text is None else 'ubah'} {rel}", site=st["name"], snapshot=snap)
+            jid = f" jurnal #{n}."
+        return f"Tersimpan: {full}. snapshot: {snap} (host_rollback untuk kembali).{jid}"
 
     async def _current(st: dict, full: str) -> tuple[int, str, str]:
         script = sites._guard(st, full) + '[ -f "$p" ] || exit 4; cat -- "$p"'
@@ -359,16 +388,14 @@ def register_host(reg: Registry, sites: Sites) -> None:
                       f"| head -10 | sed 's/^/file:/'")
             _, out, _ = await sites.owner_run(st, script)
             return "Snapshot (terbaru dulu):\n" + (out.strip() or "(belum ada)")
-        kind, _, ts = snapshot.partition(":")
-        if kind not in ("git", "file") or not re.fullmatch(r"\d{8}-\d{6}", ts):
-            return "Error: format snapshot 'git:YYYYMMDD-HHMMSS' atau 'file:YYYYMMDD-HHMMSS'."
+        if not SNAPSHOT.fullmatch(snapshot):
+            return "Error: format snapshot 'git:<waktu>' / 'file:<waktu>' (lihat host_rollback tanpa snapshot)."
         if not await ask(ctx, f"⏪ SERVER · {site}\nKembalikan file ke snapshot {snapshot}?"):
             return "User menolak. Tidak ada yang dikembalikan."
-        if kind == "git":
-            script = f"cd {root} && git checkout refs/inspire/{ts} -- . && git status --short | head -30"
-        else:
-            script = f"cp -rp $HOME/.inspire-backup/{name}/{ts}/. {root}/ && echo dikembalikan"
-        code, out, err = await sites.owner_run(st, script)
+        code, out, err = await sites.restore(st, snapshot)
+        if sites.journal:
+            sites.journal.add(ctx.chat_id, "server", "host_rollback", f"kembali ke {snapshot}",
+                              site=site, status="ok" if code == 0 else f"exit {code}")
         return f"exit_code: {code}\n{out}{err}"
 
     async def host_service(ctx: ToolContext, action: str, service: str) -> str:
@@ -385,6 +412,9 @@ def register_host(reg: Registry, sites: Sites) -> None:
                 return "User menolak."
             script = f"sudo -n systemctl {action} {service}"
         code, out, err = await sites.host.run(sites.host.as_admin(script))
+        if action in ("reload", "restart") and sites.journal:
+            sites.journal.add(ctx.chat_id, "server", "host_service", f"systemctl {action} {service}",
+                              status="ok" if code == 0 else f"exit {code}")
         return f"exit_code: {code}\n{out[-4000:]}{err[-2000:]}"
 
     s = {"site": {"type": "string", "description": "Nama situs (lihat host_sites)."}}

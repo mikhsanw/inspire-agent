@@ -9,6 +9,7 @@ compose, jadi sandbox tidak pernah melihat .env, database, atau memori agent.
     POST /edit      {"path", "old", "new", "replace_all"?}
     POST /list      {"path"?, "depth"?}
     POST /download  {"path"}  → base64
+    POST /delete    {"path"}  (dipakai rollback jurnal)
     Authorization: Bearer <SANDBOX_TOKEN>
 
 Semua path dikurung di WORKSPACE (realpath, jadi symlink keluar juga ditolak).
@@ -166,7 +167,15 @@ def f_download(b: dict) -> dict:
             "data": base64.b64encode(open(real, "rb").read()).decode()}
 
 
-FILE_OPS = {"/read": f_read, "/write": f_write, "/edit": f_edit, "/list": f_list, "/download": f_download}
+def f_delete(b: dict) -> dict:
+    real = resolve(b["path"])
+    if not os.path.isfile(real):
+        raise FileError(f"{rel(real)} bukan file")
+    os.remove(real)
+    return {"path": rel(real), "deleted": True}
+
+
+FILE_OPS = {"/delete": f_delete, "/read": f_read, "/write": f_write, "/edit": f_edit, "/list": f_list, "/download": f_download}
 
 
 class Handler(BaseHTTPRequestHandler):

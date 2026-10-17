@@ -21,6 +21,7 @@ class App:
     skills: "Skills"
     outbox: "Outbox" = None
     grants: "Grants" = None
+    journal: "Journal" = None
     stop: asyncio.Event | None = None
     restart_requested: bool = False
     gateways: list = field(default_factory=list)
@@ -49,6 +50,7 @@ class App:
 def build(settings: "Settings | None" = None) -> App:
     from .agent import Agent
     from .config import from_settings
+    from .journal import Journal
     from .llm import LLM
     from .media import Media
     from .memory import Memory
@@ -57,7 +59,7 @@ def build(settings: "Settings | None" = None) -> App:
     from .skills import Skills
     from .store import Store
     from .tools import Registry
-    from .tools.core import register_core
+    from .tools.core import register_core, register_journal
     from .tools.files import Outbox, Sandbox, register_files
     from .tools.schedule import register_schedule
     from .tools.shell import Grants, register_shell
@@ -77,15 +79,18 @@ def build(settings: "Settings | None" = None) -> App:
     media = Media(cfg.media)
     skills = Skills(cfg.data_dir / "skills")
 
+    journal = Journal(store.db)
     tools = Registry()
     register_core(tools, memory, store)
+    register_journal(tools, journal)
     register_web(tools, cfg.fetch_max_chars, cfg.search_backends)
     register_video(tools, media)
     register_skill(tools, skills)
     outbox, grants = Outbox(), Grants()
     if cfg.sandbox_url and settings.get("shell.enabled") is not False:
-        register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout, grants)
-        register_files(tools, Sandbox(cfg.sandbox_url, cfg.sandbox_token), outbox)
+        register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout, grants, journal)
+        journal.sandbox = Sandbox(cfg.sandbox_url, cfg.sandbox_token)
+        register_files(tools, journal.sandbox, outbox, journal)
     else:
         log.info("shell mati (butuh mode Docker / dimatikan di setup)")
 
@@ -96,14 +101,15 @@ def build(settings: "Settings | None" = None) -> App:
 
         host = Host(cfg.host_address, cfg.host_port, cfg.host_user, cfg.host_key,
                     str(Path(cfg.host_key).parent / "known_hosts"))
-        sites = Sites(host, ready)
+        sites = Sites(host, ready, journal)
+        journal.sites = sites
         register_host(tools, sites)
         register_db(tools, sites)
 
     agent = Agent(cfg, store, memory, llm, tools, media, skills)
     scheduler = Scheduler(store, agent)
     register_schedule(tools, store, scheduler)
-    return App(settings, cfg, agent, scheduler, skills, outbox, grants)
+    return App(settings, cfg, agent, scheduler, skills, outbox, grants, journal)
 
 
 class Router:

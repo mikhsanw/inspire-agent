@@ -22,6 +22,7 @@ HELP = """Perintah:
 {p}skillundo — batalkan perubahan skill terakhir
 {p}caveman auto|on|off — gaya jawaban singkat
 {p}kunci — cabut izin "semua perintah 30 menit"
+{p}riwayat — jurnal kerja agent; {p}rollback <nomor> — batalkan
 {p}setup — atur model, suara, gambar, dll (Telegram)
 {p}status — fitur mana yang aktif
 {p}help — bantuan ini"""
@@ -105,9 +106,25 @@ def safe_name(name: str) -> str:
 # --- perintah bersama ------------------------------------------------------
 
 
-async def command(app, chat_id: str, name: str, args: list[str], p: str) -> str:
-    """Jalankan perintah teks yang sama di semua gateway. p = awalan ('/' atau '!')."""
+async def command(app, chat_id: str, name: str, args: list[str], p: str, confirm=None) -> str:
+    """Jalankan perintah teks yang sama di semua gateway. p = awalan ('/' atau '!').
+    confirm(teks) → bool, untuk perintah yang perlu tombol (rollback)."""
     agent = app.agent
+    if name == "riwayat":
+        n = int(args[0]) if args and args[0].isdigit() else 15
+        return f"Jurnal kerja (terbaru dulu):\n\n{app.journal.render(min(n, 50))}\n\n{p}rollback <nomor> untuk membatalkan ⏪"
+    if name == "rollback":
+        if not args or not args[0].lstrip("#").isdigit():
+            return f"Pakai: {p}rollback <nomor>. Lihat nomornya di {p}riwayat"
+        e = app.journal.get(int(args[0].lstrip("#")))
+        if not e:
+            return "Nomor itu tak ada di jurnal."
+        if not e.reversible:
+            why = "sudah dibatalkan" if e.undone_by else "aksi ini tak bisa dibatalkan otomatis"
+            return f"#{e.id}: {why}.\n{e.line()}"
+        if not confirm or not await confirm(f"⏪ Batalkan #{e.id}?\n{e.line()}\n\n{app.journal.describe_undo(e)}"):
+            return "Rollback dibatalkan."
+        return await app.journal.undo(e, chat_id)
     if name == "status":
         from ..setup import render, status
 

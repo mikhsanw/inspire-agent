@@ -116,6 +116,8 @@ def register_db(reg: Registry, sites: Sites) -> None:
         if kind == "struktur":
             return await sites.redact(st, out.strip()[:8000]) or "(kosong)"
         table, hidden = mask_rows(out)
+        if sites.journal:
+            sites.journal.add(ctx.chat_id, "db", "db_query", sql[:300], site=site)
         note = f"\n(kolom disamarkan: {', '.join(hidden)})" if hidden else ""
         return (await sites.redact(st, table))[:8000] + note
 

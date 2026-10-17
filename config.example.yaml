@@ -31,6 +31,13 @@ models:
   #     api_base: http://host.docker.internal:11434/v1
   #     api_key: none
 
+# OpenCode (/opencode). Key berbayar (opsional) disimpan lewat setup, BUKAN di sini.
+opencode:
+  # model: opencode/deepseek-v4.1-flash-free   # kosong = OpenCode memilih; atau /opencode model
+  max_steps: 100               # jumlah tool_use sebelum dihentikan
+  poll_seconds: 2              # jarak membaca keluaran job
+  # bin: opencode              # nama biner di dalam sandbox
+
 memory:
   memory_chars: 2200   # batas MEMORY.md
   user_chars: 1400     # batas USER.md

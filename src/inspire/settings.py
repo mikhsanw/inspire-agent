@@ -32,6 +32,7 @@ DEFAULTS: dict = {
     "discord": {"token": "${DISCORD_BOT_TOKEN}", "command_prefix": "!"},
     "models": {"default": "", "fallback": [], "list": {}},
     "shell": {"sandbox_url": "${SANDBOX_URL}", "token": "${SANDBOX_TOKEN}"},
+    "opencode": {"key": "${OPENCODE_SANDBOX_KEY}"},
     "media": {
         "stt": {"api_key": "${GROQ_API_KEY}"},
         "inbox_dir": "${INSPIRE_INBOX}",

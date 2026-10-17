@@ -3,7 +3,8 @@
 **Agent AI pribadi ala [Hermes](https://github.com/NousResearch/hermes-agent), dibangun dari nol.**
 Ngobrol lewat Telegram atau Discord, ingat jangka panjang, bisa mengirim pengingat
 duluan, mencari di web, menulis & menjalankan kode di sandbox, memeriksa dan
-memperbaiki web di servermu (dengan persetujuanmu), mendengar voice note, melihat
+memperbaiki web di servermu (dengan persetujuanmu), menjalankan [OpenCode](https://opencode.ai) untuk
+pekerjaan coding berat, mendengar voice note, melihat
 gambar, membaca file, merangkum video, dan belajar cara kerja baru sendiri.
 Bisa memakai model apa saja, termasuk model gratis.
 
@@ -27,6 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 - [Suara, gambar, file, video](#suara-gambar-file-video)
 - [Coding](#coding)
 - [Mode tugas](#mode-tugas)
+- [OpenCode](#opencode)
 - [Web di server](#web-di-server)
 - [Jurnal & rollback](#jurnal--rollback)
 - [Gaya jawaban (caveman)](#gaya-jawaban-caveman)
@@ -50,6 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 | 🌐 | **Web** | Cari (DuckDuckGo/Bing/Yahoo, tanpa API key) dan baca halaman |
 | 🖥 | **Shell sandbox** | Perintah jalan di container terpisah. Yang berisiko minta tombol ✅/❌ |
 | 👩‍💻 | **Coding** | Tulis, jalankan, tes, dan perbaiki kode di sandbox tanpa tombol bertubi-tubi. Hasil dikirim sebagai file |
+| 🧰 | **OpenCode** | `/opencode <tugas>` menjalankan OpenCode asli di sandbox (model gratis bawaannya, atau key berbayar khusus), dengan kabar kemajuan, `/diff`, `/batalkan`, dan `/stop` |
 | 🗂 | **Mode tugas** | `/tugas` menjalankan pekerjaan coding panjang di latar belakang, dengan titik simpan git, `/diff`, dan `/batalkan` |
 | 🛠 | **Web di server** | Baca log, kode, dan database web Laravel/PHP di servermu; perubahan tampil sebagai diff → ✅, dengan snapshot & rollback |
 | 📒 | **Jurnal & rollback** | Setiap aksi yang mengubah sesuatu dicatat; `/rollback <nomor>` untuk mundur |
@@ -88,7 +91,7 @@ tool disimpan di SQLite, jadi bisa dicari dan diringkas saat konteks hampir penu
 
 | | Minimal |
 |---|---|
-| Server | VPS Linux (Ubuntu/Debian), 1 vCPU, 1 GB RAM. Mac bisa untuk dev |
+| Server | VPS Linux (Ubuntu/Debian), 1 vCPU, 1 GB RAM untuk semua fitur. **`/opencode` butuh ±1 GB lagi** (OpenCode memakai ±600 MB saat bekerja): disarankan 2 GB. Mac bisa untuk dev |
 | Docker | Disarankan (untuk shell sandbox). Installer bisa memasangnya |
 | Akun | Bot Telegram (gratis, dari [@BotFather](https://t.me/BotFather)) **atau** bot Discord |
 | Model | Satu API key. Yang gratis: [OpenRouter](https://openrouter.ai/keys) atau [Gemini](https://aistudio.google.com/apikey) |
@@ -160,6 +163,7 @@ inspire doctor           # status semua fitur + tes semua key
 | `gambar` | Deskripsi gambar | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | ✅ |
 | `discord` | Token bot Discord | [Developer Portal](https://discord.com/developers/applications) | ✅ |
 | `shell` | Nyala/matikan sandbox | — (butuh mode Docker) | ✅ |
+| `opencode` | Key berbayar KHUSUS untuk OpenCode (opsional) | [opencode.ai/console](https://opencode.ai/console) | tanpa key: model gratis bawaan |
 | `web` | Situs di server ini (hanya dari terminal, butuh sudo) | — | ✅ |
 | `gaya` | Gaya jawaban: otomatis / caveman / normal | — | ✅ |
 | `youtube` | `cookies.txt` untuk YouTube | ekstensi "Get cookies.txt LOCALLY" | ✅ |
@@ -216,6 +220,7 @@ Telegram pakai `/`, Discord pakai `!`.
 | `/caveman auto\|on\|off` | Gaya jawaban |
 | `/kunci` | Cabut izin "semua perintah sandbox 30 menit" |
 | `/proyek` · `/tugas <deskripsi>` | Folder proyek coding · kerjakan di latar belakang ([Mode tugas](#mode-tugas)) |
+| `/opencode …` | Kerjakan dengan OpenCode: `<tugas>` · `lanjut <pesan>` · `models` · `model <provider/model\|auto>` ([OpenCode](#opencode)) |
 | `/stop` · `/diff [n]` · `/batalkan [n]` | Hentikan tugas · lihat perubahan · batalkan tugas terbaru |
 | `/riwayat [n]` | Jurnal kerja agent |
 | `/rollback <nomor>` | Batalkan satu aksi dari jurnal (lewat ✅) |
@@ -397,6 +402,69 @@ kamu tetap bisa ngobrol.
 - `/stop` menghentikan agent seketika, tapi perintah shell yang *sedang* jalan di sandbox selesai
   sendiri sesuai timeout-nya.
 
+## OpenCode
+
+[OpenCode](https://opencode.ai) adalah agent coding terbuka. inspire bisa **menjalankannya sebagai pekerja**:
+OpenCode asli (bukan tiruan) berjalan di dalam sandbox, mengerjakan tugasmu, dan inspire mengabari
+perkembangannya lewat Telegram/Discord. Ini jalur yang sah untuk memakai **model gratis OpenCode**,
+yang terkunci ke aplikasi OpenCode sendiri dan tak bisa dipakai lewat API biasa.
+
+```
+/opencode buat REST API kecil dengan Flask: GET /ping dan POST /todo, lengkap dengan tes pytest
+  ▶ Tugas #1 (OpenCode · opencode/deepseek-v4.1-flash-free) dimulai di proyek 'buat-rest-api'…
+  ⚙️ Tugas #1 · langkah 3 · cat .gitignore; tulis buat-rest-api/app.py
+  ✅ Tugas #1 selesai · 6 langkah · ±1 menit
+     🧰 OpenCode · opencode/deepseek-v4.1-flash-free · 8.800 token
+     (ringkasan OpenCode, daftar file yang berubah)
+/diff                      ← perubahan sebagai blok kode
+/opencode lanjut tambahkan DELETE /todo/<id>      ← lanjutkan sesi OpenCode yang sama
+/batalkan                  ← kembalikan proyek ke sebelum tugas
+```
+
+| Perintah | Fungsi |
+|---|---|
+| `/opencode <tugas>` | Kerjakan di latar belakang di proyek aktif (dibuat otomatis kalau belum ada) |
+| `/opencode lanjut <pesan>` | Lanjutkan **sesi OpenCode tugas terakhir di proyek ini** (id sesi disimpan per tugas) |
+| `/opencode models` | Daftar model yang tersedia (tanpa key: model gratis bawaan; dengan key: termasuk yang berbayar) |
+| `/opencode model <provider/model>` · `auto` | Pilih model. `auto` = OpenCode memilih sendiri |
+| `/opencode` | Status: versi, model, ada/tidaknya key |
+| `/stop` · `/diff` · `/batalkan` | Sama seperti [Mode tugas](#mode-tugas): titik simpan git sebelum dan sesudah tiap tugas |
+
+Hanya **kamu** yang memicunya (perintah), bukan agent sendiri: pemakaian kuota dan data tetap di tanganmu, dan
+isi web atau file yang dibaca agent tidak bisa menyuruhnya menjalankan OpenCode.
+
+**Model & key**
+- **Tanpa key** (bawaan): model gratis bawaan OpenCode. Batasnya per IP, penawarannya "waktu terbatas", dan
+  tiap model punya kebijakan data sendiri (sebagian boleh dipakai melatih model, sebagian menyimpan log).
+  **Jangan kirim data sensitif ke model gratis.**
+- **Dengan key berbayar** (opsional, `/setup` → OpenCode atau `inspire setup opencode`): pakai saldo di
+  [opencode.ai/console](https://opencode.ai/console). ⚠️ Key ini **dimasukkan ke sandbox** saat OpenCode bekerja, jadi
+  OpenCode (dan apa pun yang disuruhkan padanya) bisa membacanya. Buat key **khusus** dengan batas pemakaian bulanan
+  rendah, jangan pakai key utamamu. Key ini terpisah dari key OpenCode yang dipakai inspire sebagai model.
+
+**Batasan keamanan, dengan jujur**
+- Pembatas sesungguhnya adalah **container sandbox**: tak melihat `settings.json`, database, memori, atau server-mu;
+  berjalan sebagai user non-root tanpa capability, dengan batas RAM/proses.
+- OpenCode berjalan **tanpa `--auto`** (pertanyaan izin otomatis ditolak) dan dengan daftar `deny` untuk perintah
+  ceroboh (`rm -rf`, `sudo`, `git push`, …). Itu hanya pengaman kecil. Hasil uji: `deny` pada pola `bash` bekerja, tetapi
+  `external_directory: deny` **hanya membatasi tool file OpenCode, bukan bash**; perintah shell-nya tetap bisa menyentuh
+  apa pun yang bisa disentuh user sandbox (termasuk proyek lain di `/workspace`).
+- Karena itu **tidak ada tombol ✅ per perintah** seperti pada `/tugas` (OpenCode yang berjalan tanpa tampilan tak bisa
+  bertanya lewat chat). Pengamannya: titik simpan git per proyek, `/diff` untuk memeriksa, dan `/batalkan`.
+  Rollback hanya mengembalikan **proyek itu**; kerusakan di proyek lain tidak tercakup.
+- Tugas dibatasi 100 langkah dan 30 menit (`opencode.max_steps`, `agent.task_max_minutes`). `/stop` menghentikan
+  **seluruh pohon proses**, termasuk perintah yang dijalankan OpenCode di grup prosesnya sendiri.
+
+**Cara kerja:** sandbox punya endpoint *job* latar belakang (proses tanpa shell, stdin ditutup, keluaran dibaca bertahap).
+inspire menjalankan `opencode run --pure --format json`, membaca event JSONL-nya (`tool_use`, `text`, `step_finish`,
+`error`) untuk kabar kemajuan, ringkasan akhir, jumlah token, dan penjelasan error (mis. key ditolak). Versi OpenCode
+dikunci di `Dockerfile.sandbox` (`OPENCODE_VERSION`) karena format event-nya dibaca inspire; kalau menaikkannya, jalankan
+`tests/test_opencode.py` dan uji manual.
+
+**Memori:** OpenCode memakai ±600 MB saat bekerja. Batas sandbox bawaan 1 GB (`SANDBOX_MEM` di `.env`, lalu
+`docker compose up -d`). Kalau OpenCode dimatikan karena memori (kode 137), bot akan memberi tahu.
+Butuh Docker; di mode native `/opencode` tidak tersedia.
+
 ## Web di server
 
 Agent bisa memeriksa dan memperbaiki web yang jalan di server yang sama, misalnya
@@ -536,6 +604,8 @@ Untuk setelan yang tidak ada di wizard, buat `data/config.yaml`. Isinya menimpa
 | `agent.chain_timeout` | 150 | Batas total seluruh rantai fallback (detik) |
 | `agent.task_max_iterations` / `task_max_minutes` | 60 / 30 | Batas satu tugas |
 | `agent.task_progress_seconds` | 45 | Jarak minimal antar kabar kemajuan |
+| `opencode.model` / `bin` | kosong / `opencode` | Model OpenCode bawaan (atau `/opencode model`) dan nama biner di sandbox |
+| `opencode.max_steps` / `poll_seconds` | 100 / 2 | Batas langkah (jumlah tool) dan jarak membaca keluaran |
 | `shell.enabled` / `timeout` / `confirm_timeout` | true / 60 / 300 | Shell |
 | `web.search_backends` | `[duckduckgo, bing, yahoo]` | Mesin cari, dicoba berurutan |
 | `web.fetch_max_chars` | 12000 | Batas teks halaman web |
@@ -558,6 +628,9 @@ Rujuk key dengan `${NAMA_KEY}`. Jangan menulis key langsung di `config.yaml`.
 | Pairing di wizard "bot sedang jalan di tempat lain" | Bot sudah jalan. Kirim `/pair <kode>` langsung ke bot |
 | YouTube "minta login / bukan bot" | IP server diblokir YouTube. `/setup` → YouTube → kirim `cookies.txt` (pakai akun cadangan) |
 | Web search "tidak ada hasil" | DuckDuckGo diblokir sebagian ISP Indonesia; Bing/Yahoo dicoba otomatis. Di VPS luar biasanya normal |
+| `/opencode` "belum bisa dipakai di sandbox" | Image sandbox lama (belum berisi OpenCode): `inspire update` untuk membangun ulang |
+| `/opencode` gagal "kode 137" | Kehabisan memori. Naikkan `SANDBOX_MEM` (mis. `1500m`) di `.env`, lalu `docker compose up -d`, atau pilih tugas lebih kecil |
+| `/opencode` gagal "Key ditolak" | Key khusus OpenCode salah atau saldo habis: `/setup` → OpenCode. Tanpa key ia memakai model gratis bawaan |
 | Shell ⬜ "butuh mode Docker" | Pasang Docker, lalu jalankan installer lagi (data tetap) |
 | Discord diam | Nyalakan *Message Content Intent*, lalu `inspire restart` |
 | `inspire setup web-test` gagal SSH | sshd jalan? `AllowUsers` di `sshd_config` memuat `inspire`? Firewall mengizinkan koneksi dari jaringan Docker ke port 22? |
@@ -614,8 +687,9 @@ src/inspire/
   media.py           STT, deskripsi gambar, ekstrak file, transkrip video
   skills.py          skill markdown + git
   journal.py         jurnal aksi + rollback
-  tasks.py           mode tugas: proyek git, latar belakang, diff, batalkan
-  sandbox_server.py  server exec + file di container sandbox (stdlib)
+  tasks.py           mode tugas: proyek git, latar belakang, diff, batalkan; mesin inspire atau OpenCode
+  opencode.py        menjalankan OpenCode di sandbox: argv, izin, env, parser event JSONL
+  sandbox_server.py  server exec + file + job latar belakang di container sandbox (stdlib)
   skills_builtin/    skill bawaan: coding, web-laravel
   setup/             bagian setup, tes key, status, wizard terminal
   tools/             memory, search_history, schedule, web, shell, files, video, skill,

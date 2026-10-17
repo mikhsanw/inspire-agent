@@ -25,6 +25,7 @@ HELP = """Perintah:
 {p}kunci — cabut izin "semua perintah 30 menit"
 {p}riwayat — jurnal kerja agent; {p}rollback <nomor> — batalkan
 {p}proyek — folder proyek coding; {p}tugas <deskripsi> — kerjakan di latar belakang
+{p}opencode <tugas> — sama, tapi dikerjakan oleh OpenCode (lihat {p}opencode)
 {p}stop — hentikan tugas; {p}diff [n] — lihat perubahan; {p}batalkan [n] — batalkan tugas terbaru
 {p}setup — atur model, suara, gambar, dll (Telegram)
 {p}status — fitur mana yang aktif
@@ -117,7 +118,7 @@ async def command(app, chat_id: str, name: str, args: list[str], p: str, confirm
     """Jalankan perintah teks yang sama di semua gateway. p = awalan ('/' atau '!').
     confirm(teks) → bool, untuk perintah yang perlu tombol (rollback)."""
     agent = app.agent
-    if name in ("proyek", "tugas", "stop", "diff", "batalkan"):
+    if name in ("proyek", "tugas", "opencode", "stop", "diff", "batalkan"):
         if not getattr(app, "tasks", None):
             return "Mode tugas butuh sandbox (mode Docker)."
         return await app.tasks.command(chat_id, name, args, confirm, p)

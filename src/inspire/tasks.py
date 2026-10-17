@@ -20,6 +20,8 @@ import shlex
 import sqlite3
 import time
 
+from . import opencode as oc
+
 log = logging.getLogger(__name__)
 
 SCHEMA = """
@@ -36,7 +38,12 @@ CREATE TABLE IF NOT EXISTS tasks (
     steps         INTEGER DEFAULT 0,
     journal_from  INTEGER DEFAULT 0, -- entri jurnal sandbox selama tugas: (from, to]
     journal_to    INTEGER DEFAULT 0,
-    summary       TEXT
+    summary       TEXT,
+    engine        TEXT DEFAULT 'inspire',   -- inspire | opencode
+    session       TEXT,                     -- id sesi OpenCode (untuk /opencode lanjut)
+    model         TEXT,
+    tokens        INTEGER DEFAULT 0,
+    cost          REAL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -72,7 +79,14 @@ class Tasks:
         self._handle: asyncio.Task | None = None
         self.running_id: int | None = None
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
+        for name, ddl in (("engine", "TEXT DEFAULT 'inspire'"), ("session", "TEXT"), ("model", "TEXT"),
+                          ("tokens", "INTEGER DEFAULT 0"), ("cost", "REAL DEFAULT 0")):
+            if name not in cols:                      # DB dari versi sebelum OpenCode
+                self.db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}")
         self.db.commit()
+        self._oc_ready_at = 0.0                       # cache pengecekan "OpenCode terpasang di sandbox"
+        self._oc_models: list[str] | None = None
         # Proses sebelumnya mati saat tugas jalan → jangan tampil "berjalan" selamanya.
         self.db.execute("UPDATE tasks SET status='dihentikan' WHERE status='berjalan'")
         self.db.commit()
@@ -133,6 +147,8 @@ class Tasks:
                 return await self._cmd_proyek(args, prefix)
             if name == "tugas":
                 return await self._cmd_tugas(chat_id, " ".join(args), prefix)
+            if name == "opencode":
+                return await self._cmd_opencode(chat_id, args, prefix)
             if name == "stop":
                 return self.stop()
             if name == "diff":
@@ -169,6 +185,10 @@ class Tasks:
             lines = [f"{ICON.get(r['status'], '•')} #{r['id']} [{r['project']}] {r['status']} · {r['prompt'][:60]}"
                      for r in recent]
             return head + "\n\nTugas terakhir:\n" + "\n".join(lines)
+        return await self._start(chat_id, prompt, p)
+
+    async def _start(self, chat_id: str, prompt: str, p: str, engine: str = "inspire",
+                     session: str = "", model: str = "") -> str:
         if self.running_id:
             return f"Tugas #{self.running_id} masih berjalan. {p}stop untuk menghentikan."
         project = self.active_project() or slug(" ".join(prompt.split()[:3])) or "proyek"
@@ -177,19 +197,103 @@ class Tasks:
         await self.ensure_project(project)
         self._kv_set("project", project)
         cur = self.db.execute(
-            "INSERT INTO tasks(chat_id, project, prompt, status, started) VALUES (?,?,?,?,?)",
-            (chat_id, project, prompt.strip(), "berjalan", time.time()))
+            "INSERT INTO tasks(chat_id, project, prompt, status, started, engine, model) VALUES (?,?,?,?,?,?,?)",
+            (chat_id, project, prompt.strip(), "berjalan", time.time(), engine, model or None))
         self.db.commit()
         tid = cur.lastrowid
         before = await self.checkpoint(project, f"sebelum tugas #{tid}")
         jfrom = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM journal").fetchone()[0]
         self.db.execute("UPDATE tasks SET before_commit=?, journal_from=? WHERE id=?", (before, jfrom, tid))
         self.db.commit()
+        if engine == "opencode":   # catatan audit: file yang diubah OpenCode tak dijurnal satu per satu
+            self.journal.add(chat_id, "sandbox", "opencode", f"OpenCode · tugas #{tid}: {prompt.strip()[:80]}")
         self.running_id = tid
-        self._handle = asyncio.create_task(self._run(tid, chat_id, project, prompt.strip()))
+        self._handle = asyncio.create_task(self._run(tid, chat_id, project, prompt.strip(), engine, session, model))
+        if engine == "opencode":
+            return (f"▶ Tugas #{tid} (OpenCode · {model or 'model otomatis'}) dimulai di proyek '{project}'. "
+                    f"Berjalan di latar belakang (maks {self.cfg.opencode_max_steps} langkah / "
+                    f"{self.cfg.task_max_minutes} menit), kabar berkala. {p}stop untuk menghentikan.")
         return (f"▶ Tugas #{tid} dimulai di proyek '{project}'. Aku bekerja di latar belakang "
                 f"(maks {self.cfg.task_max_iterations} langkah / {self.cfg.task_max_minutes} menit) dan "
                 f"mengabari berkala. Kamu tetap bisa ngobrol. {p}stop untuk menghentikan.")
+
+    # --- OpenCode -------------------------------------------------------------------------
+
+    def oc_model(self) -> str:
+        return self._kv_get("oc_model") or self.cfg.opencode_model or ""
+
+    async def oc_ready(self) -> tuple[bool, str]:
+        """OpenCode terpasang di sandbox? (di-cache 10 menit). → (ok, versi / pesan)."""
+        if self._oc_ready_at and time.time() - self._oc_ready_at < 600 and self._oc_version:
+            return True, self._oc_version
+        try:
+            code, out, err = await oc.capture(self.sandbox, [self.cfg.opencode_bin, "--version"], timeout=30)
+        except RuntimeError as e:
+            return False, str(e)
+        if code != 0 or not out.strip():
+            return False, (err or out).strip()[:200] or "tak terpasang"
+        self._oc_version, self._oc_ready_at = out.strip().splitlines()[-1], time.time()
+        return True, self._oc_version
+
+    _oc_version = ""
+
+    async def oc_models(self, refresh: bool = False) -> list[str]:
+        if self._oc_models is None or refresh:
+            env = oc.build_env(self.cfg.opencode_key)
+            code, out, _ = await oc.capture(self.sandbox, [self.cfg.opencode_bin, "models"], env=env, timeout=90)
+            self._oc_models = oc.parse_models(out) if code == 0 else []
+        return self._oc_models
+
+    async def _cmd_opencode(self, chat_id: str, args: list[str], p: str) -> str:
+        sub = args[0].lower() if args else ""
+        ok, info = await self.oc_ready()
+        if not ok:
+            return (f"OpenCode belum bisa dipakai di sandbox ({info}). Image sandbox mungkin lama: jalankan "
+                    "`inspire update` di server (membangun ulang image).")
+        if not args:
+            key = "ada (model berbayar)" if self.cfg.opencode_key else "tidak ada (model gratis bawaan OpenCode)"
+            return (f"🧰 OpenCode {info} di sandbox\nModel: {self.oc_model() or 'otomatis (OpenCode memilih)'} · key: {key}\n"
+                    f"Proyek aktif: {self.active_project() or '(dibuat otomatis)'}\n\n"
+                    f"{p}opencode <tugas> — kerjakan di latar belakang (titik simpan git, {p}diff, {p}batalkan)\n"
+                    f"{p}opencode lanjut <pesan> — lanjutkan sesi OpenCode tugas terakhir di proyek ini\n"
+                    f"{p}opencode models — daftar model · {p}opencode model <provider/model|auto> — pilih model")
+        if sub == "models":
+            models = await self.oc_models(refresh=True)
+            if not models:
+                return "Daftar model kosong (OpenCode belum bisa mengambilnya). Coba lagi nanti."
+            cur = self.oc_model()
+            lines = [f"{'▶ ' if m == cur else '  '}{m}" for m in models[:60]]
+            more = f"\n… dan {len(models) - 60} lagi" if len(models) > 60 else ""
+            note = "" if self.cfg.opencode_key else "\n(Tanpa key hanya model gratis bawaan OpenCode yang tampil.)"
+            return (f"Model OpenCode ({len(models)}):\n" + "\n".join(lines) + more + note +
+                    f"\n\n{p}opencode model <provider/model> untuk memilih")
+        if sub == "model":
+            if len(args) < 2:
+                return f"Model sekarang: {self.oc_model() or 'otomatis'}. Pilih: {p}opencode model <provider/model> atau auto"
+            want = args[1]
+            if want.lower() in ("auto", "reset", "otomatis"):
+                self._kv_set("oc_model", "")
+                self.cfg.opencode_model = ""
+                return "Model OpenCode: otomatis (OpenCode memilih sendiri)."
+            known = await self.oc_models()
+            if known and want not in known:
+                close = [m for m in known if want.lower() in m.lower()][:6]
+                hint = ("\nMirip: " + ", ".join(close)) if close else f"\nLihat daftar: {p}opencode models"
+                return f"Model '{want}' tak ada di daftar OpenCode.{hint}"
+            self._kv_set("oc_model", want)
+            return f"Model OpenCode: {want}"
+        if sub == "lanjut":
+            text = " ".join(args[1:]).strip()
+            if not text:
+                return f"Pakai: {p}opencode lanjut <pesan lanjutan>"
+            project = self.active_project()
+            row = self.db.execute(
+                "SELECT session FROM tasks WHERE engine='opencode' AND project=? AND session IS NOT NULL AND session!='' "
+                "ORDER BY id DESC LIMIT 1", (project,)).fetchone() if project else None
+            if not row:
+                return f"Belum ada sesi OpenCode di proyek ini. Mulai dengan {p}opencode <tugas>."
+            return await self._start(chat_id, text, p, "opencode", row["session"], self.oc_model())
+        return await self._start(chat_id, " ".join(args), p, "opencode", "", self.oc_model())
 
     def stop(self) -> str:
         if not self.running_id or not self._handle:
@@ -200,26 +304,43 @@ class Tasks:
 
     # --- eksekusi latar belakang -----------------------------------------------------
 
-    async def _run(self, tid: int, chat_id: str, project: str, prompt: str) -> None:
+    async def _run(self, tid: int, chat_id: str, project: str, prompt: str,
+                   engine: str = "inspire", session: str = "", model: str = "") -> None:
         started = time.monotonic()
         state = {"steps": 0, "last": started, "recent": []}
 
-        async def on_step(tool: str, raw: str, n: int) -> None:
+        async def note(text: str, n: int) -> None:
             state["steps"] = n
-            state["recent"].append(brief(tool, raw))
+            state["recent"].append(text)
             if time.monotonic() - state["last"] >= self.cfg.task_progress_seconds:
                 state["last"] = time.monotonic()
                 recent, state["recent"] = state["recent"][-3:], []
                 await self._say(chat_id, f"⚙️ Tugas #{tid} · langkah {n} · " + "; ".join(recent))
 
-        status, reply = "selesai", ""
+        async def on_step(tool: str, raw: str, n: int) -> None:
+            await note(brief(tool, raw), n)
+
+        status, reply, extra = "selesai", "", None
+        limit_s = self.cfg.task_max_minutes * 60
         try:
-            confirm = self.router.confirm_for(chat_id) if self.router else None
-            reply, _ = await asyncio.wait_for(
-                self.agent.run_task(chat_id, tid, project, prompt, confirm, on_step),
-                timeout=self.cfg.task_max_minutes * 60)
-            if reply.startswith("⚠️ Semua model gagal"):
-                status = "gagal"
+            if engine == "opencode":
+                out = await asyncio.wait_for(
+                    oc.run(self.sandbox, project, prompt, binary=self.cfg.opencode_bin, model=model, session=session,
+                           key=self.cfg.opencode_key, timeout=limit_s, max_steps=self.cfg.opencode_max_steps,
+                           poll=self.cfg.opencode_poll, on_step=note),
+                    timeout=limit_s + 30)                      # cadangan; job sandbox punya timeout sendiri
+                status, reply, extra = self._oc_result(out, model)
+                state["steps"] = max(state["steps"], out.summary.steps)
+                self.db.execute("UPDATE tasks SET session=?, tokens=?, cost=? WHERE id=?",
+                                (out.summary.session or None, out.summary.tokens_in + out.summary.tokens_out,
+                                 out.summary.cost, tid))
+                self.db.commit()
+            else:
+                confirm = self.router.confirm_for(chat_id) if self.router else None
+                reply, _ = await asyncio.wait_for(
+                    self.agent.run_task(chat_id, tid, project, prompt, confirm, on_step), timeout=limit_s)
+                if reply.startswith("⚠️ Semua model gagal"):
+                    status = "gagal"
         except asyncio.TimeoutError:
             status, reply = "dihentikan", f"⚠️ Waktu {self.cfg.task_max_minutes} menit habis. Pekerjaan sampai di sini tersimpan."
         except asyncio.CancelledError:
@@ -228,14 +349,34 @@ class Tasks:
             log.exception("tugas #%s gagal", tid)
             status, reply = "gagal", f"{type(e).__name__}: {e}"
         try:
-            await self._finish(tid, chat_id, project, status, reply, state["steps"], time.monotonic() - started)
+            await self._finish(tid, chat_id, project, status, reply, state["steps"], time.monotonic() - started, extra)
         except Exception:
             log.exception("finalisasi tugas #%s gagal", tid)
             await self._say(chat_id, f"❌ Tugas #{tid} berakhir, tapi titik simpan akhir gagal dibuat. Cek /diff {tid}.")
         finally:
             self.running_id, self._handle = None, None
 
-    async def _finish(self, tid, chat_id, project, status, reply, steps, seconds) -> None:
+    def _oc_result(self, out: "oc.Outcome", model: str) -> tuple[str, str, dict]:
+        s = out.summary
+        extra = {"engine": "OpenCode", "model": model or "otomatis", "tokens": s.tokens_in + s.tokens_out,
+                 "cost": s.cost, "failed": s.failed_tools}
+        final = s.final_text
+        if out.limited:
+            return "dihentikan", (f"⚠️ Melewati batas {self.cfg.opencode_max_steps} langkah, dihentikan. Pekerjaan sampai "
+                                  f"di sini tersimpan; lanjutkan dengan /opencode lanjut …\n\n{final}").strip(), extra
+        if out.timed_out:
+            return "dihentikan", f"⚠️ Waktu {self.cfg.task_max_minutes} menit habis. Pekerjaan sampai di sini tersimpan.\n\n{final}".strip(), extra
+        if s.error:
+            return "gagal", oc.explain_error(s.error), extra
+        if out.exit_code in (-9, 137):
+            return "gagal", ("OpenCode dimatikan (kode 137): hampir pasti kehabisan memori. Batas sandbox bawaan 1 GB; "
+                             "naikkan dengan SANDBOX_MEM di .env lalu `docker compose up -d`, atau pilih tugas yang lebih kecil."), extra
+        if out.exit_code not in (0, None):
+            tail = (out.stderr or "").strip()[-300:]
+            return "gagal", f"OpenCode berhenti dengan kode {out.exit_code}.\n{tail}\n{final}".strip(), extra
+        return "selesai", final or "(OpenCode tak memberi ringkasan; lihat /diff)", extra
+
+    async def _finish(self, tid, chat_id, project, status, reply, steps, seconds, extra=None) -> None:
         after = await self.checkpoint(project, f"tugas #{tid}")
         row = self.db.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
         jto = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM journal").fetchone()[0]
@@ -245,7 +386,12 @@ class Tasks:
         self.db.commit()
         _, stat, _ = await self.git(project, "diff", "--stat", row["before_commit"], after)
         mins = max(1, round(seconds / 60))
-        text = (f"{ICON[status]} Tugas #{tid} {status} · {steps} langkah · ±{mins} menit\n\n{reply}\n\n"
+        head = f"{ICON[status]} Tugas #{tid} {status} · {steps} langkah · ±{mins} menit"
+        if extra:
+            head += f"\n🧰 {extra['engine']} · {extra['model']} · {extra['tokens']:,} token".replace(",", ".")
+            head += f" · ${extra['cost']:.4f}" if extra["cost"] else ""
+            head += f" · {extra['failed']} langkah gagal" if extra["failed"] else ""
+        text = (f"{head}\n\n{reply}\n\n"
                 f"Perubahan:\n{stat.strip() or '(tak ada perubahan file)'}\n\n/diff {tid} · /batalkan {tid}")
         await self._say(chat_id, text)
 

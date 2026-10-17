@@ -32,7 +32,18 @@ class KeySection:
     restart: bool = False
 
 
+async def _accept(key: str) -> tuple[bool, str]:
+    """Key OpenCode tak dites: tes sungguhan berarti memakai saldo. Salah key terlihat saat tugas pertama."""
+    return bool(key.strip()), "disimpan (belum dites; dicoba saat tugas OpenCode berikutnya)"
+
+
 KEY_SECTIONS = {
+    "opencode": KeySection(
+        "opencode", "OpenCode (key berbayar)",
+        "OPSIONAL. /opencode jalan tanpa key memakai model gratis bawaan OpenCode. Key ini membuka model berbayar, "
+        "dan DIMASUKKAN ke sandbox saat OpenCode bekerja (OpenCode bisa membacanya). Pakai key KHUSUS dengan batas "
+        "pemakaian rendah (opencode.ai/console), jangan key utamamu.",
+        "OPENCODE_SANDBOX_KEY", "https://opencode.ai/console", _accept),
     "telegram": KeySection(
         "telegram", "Telegram", "Ngobrol dengan agent lewat Telegram.",
         "TELEGRAM_BOT_TOKEN", "https://t.me/BotFather → /newbot", checks.telegram, restart=True),
@@ -49,10 +60,10 @@ KEY_SECTIONS = {
 }
 
 # Urutan tampil. "model", "shell", "youtube", "zona" punya alur sendiri.
-ORDER = ["telegram", "model", "suara", "gambar", "discord", "shell", "web", "gaya", "youtube", "zona"]
+ORDER = ["telegram", "model", "suara", "gambar", "discord", "shell", "opencode", "web", "gaya", "youtube", "zona"]
 TITLES = {
     "telegram": "Telegram", "model": "Model AI", "suara": "Suara", "gambar": "Gambar",
-    "discord": "Discord", "shell": "Shell & coding", "web": "Web di server", "gaya": "Gaya jawaban",
+    "discord": "Discord", "shell": "Shell & coding", "opencode": "OpenCode", "web": "Web di server", "gaya": "Gaya jawaban",
     "youtube": "YouTube", "zona": "Zona waktu",
 }
 NEEDS_RESTART = {"telegram", "discord", "shell"}
@@ -217,6 +228,25 @@ async def status(settings: Settings, live: bool = False) -> list[Feature]:
         add("shell", "on" if ok else "err", msg, "" if ok else "docker compose up -d sandbox")
     else:
         add("shell", "on", "sandbox Docker")
+
+    key_note = "key berbayar terpasang" if cfg.opencode_key else "model gratis bawaan"
+    if not cfg.sandbox_url or settings.get("shell.enabled") is False:
+        add("opencode", "off", "butuh sandbox (mode Docker)", "pasang Docker lalu install ulang")
+    elif live:
+        from ..opencode import capture
+        from ..tools.files import Sandbox
+
+        try:
+            code, ver_out, _ = await capture(Sandbox(cfg.sandbox_url, cfg.sandbox_token), [cfg.opencode_bin, "--version"], timeout=30)
+            ver = ver_out.strip().splitlines()[-1] if code == 0 and ver_out.strip() else ""
+        except Exception:
+            ver = ""
+        if ver:
+            add("opencode", "on", f"{ver} · {key_note}")
+        else:
+            add("opencode", "err", "tak ada di image sandbox", "inspire update (membangun ulang image)")
+    else:
+        add("opencode", "on", f"di sandbox · {key_note}")
 
     if cfg.sites and all(x.get("owner") for x in cfg.sites):
         add("web", "on", ", ".join(x["name"] for x in cfg.sites))

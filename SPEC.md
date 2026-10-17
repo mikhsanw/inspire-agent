@@ -94,3 +94,15 @@ Tanpa GitHub (push tetap di luar cakupan). Hanya sandbox: tool server/DB/jadwal 
   30 menit untuk key/nama model/diblokir, batas waktu per model + total rantai, status di `/model`,
   anggaran konteks per model, catatan "dijawab oleh".
 - Tidak dikerjakan (sengaja): model per peran (chat/ringkas/tugas/vision) dan pemantauan biaya (`/biaya`).
+
+### Fase 8 — OpenCode sebagai pekerja ✅
+
+Keputusan: `/opencode` dipicu **hanya oleh user** (bukan tool agent); OpenCode asli dijalankan **di dalam sandbox**
+(tanpa Docker: tidak tersedia); fondasi mode tugas dipakai ulang (proyek git, titik simpan, `/diff`, `/batalkan`, `/stop`).
+Model gratis bawaan OpenCode tanpa key; key berbayar opsional dan KHUSUS (terpisah dari key lain, karena masuk sandbox).
+
+Hasil pengamatan OpenCode 1.19 asli (bukan tebakan): stdin harus ditutup (kalau tidak, menggantung); `--format json` →
+JSONL step_start / tool_use / text / step_finish / error, kode keluar 1 saat error; tanpa `--auto` izin 'ask' ditolak
+otomatis; `external_directory: deny` tak membatasi bash (batas = container); `--continue` = sesi terakhir global
+(maka sesi disimpan per tugas dan dilanjutkan dengan `-s`); perintah OpenCode berjalan di grup proses sendiri (maka
+`/stop` mematikan seluruh pohon proses); ±600 MB RAM.

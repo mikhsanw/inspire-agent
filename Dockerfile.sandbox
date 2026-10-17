@@ -1,16 +1,30 @@
-# Sandbox shell: terpisah dari agent, tanpa akses .env / data agent.
-FROM python:3.12-slim-bookworm
+# Sandbox shell & coding: terpisah dari agent, tanpa akses settings.json / data agent.
+# Node (npm test, build) + Python (pytest, pip) + OpenCode (mesin /opencode).
+FROM node:22-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash curl ca-certificates git jq procps tree file less unzip \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1000 agent \
-    && mkdir -p /workspace && chown agent:agent /workspace
+        bash curl ca-certificates git jq procps tree file less unzip zip \
+        python3 python3-pip python3-venv python-is-python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenCode: versi yang sudah diuji (format event JSON-nya dibaca inspire). Naikkan dengan hati-hati
+# dan jalankan tests/test_opencode.py + uji manual.
+ARG OPENCODE_VERSION=1.19.3
+RUN npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force
+
+# User non-root (uid 1000). Image node memakai uid itu untuk user 'node', jadi diganti.
+RUN userdel -r node \
+    && useradd -m -u 1000 -s /bin/bash agent \
+    && mkdir -p /workspace /home/agent/.local/share/opencode \
+    && chown -R agent:agent /workspace /home/agent
 
 COPY src/inspire/sandbox_server.py /opt/sandbox_server.py
 
 USER agent
-ENV WORKSPACE=/workspace HOME=/home/agent PYTHONUNBUFFERED=1
+# PIP_BREAK_SYSTEM_PACKAGES: Debian melarang pip di luar venv (PEP 668); container ini buangan.
+ENV WORKSPACE=/workspace HOME=/home/agent PYTHONUNBUFFERED=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    OPENCODE_DISABLE_AUTOUPDATE=1
 WORKDIR /workspace
 EXPOSE 8765
-CMD ["python", "/opt/sandbox_server.py"]
+CMD ["python3", "/opt/sandbox_server.py"]

@@ -349,6 +349,15 @@ def step_shell(s: Settings) -> None:
     ok("Shell " + ("aktif" if on else "mati"))
 
 
+def step_opencode(s: Settings) -> None:
+    if not os.environ.get("SANDBOX_URL"):
+        head("OpenCode")
+        say("/opencode butuh sandbox (mode Docker). Mode ini tanpa Docker → dilewati.")
+        s.skip("opencode")
+        return
+    step_key(s, "opencode")
+
+
 def step_youtube(s: Settings) -> None:
     head("YouTube (opsional)")
     say("YouTube sering menolak IP server. Kalau punya cookies.txt dari browser, masukkan path-nya.")
@@ -475,6 +484,7 @@ STEPS = {
     "gambar": lambda s: step_key(s, "gambar"),
     "discord": step_discord,
     "shell": step_shell,
+    "opencode": lambda s: step_opencode(s),
     "youtube": step_youtube,
     "zona": step_zona,
     "web": step_web,
@@ -500,7 +510,7 @@ def wizard(s: Settings, section: str | None = None) -> None:
                 step_discord(s)
             step_model(s)
             if mode == 1:
-                for sid in ("suara", "gambar", "discord", "shell", "youtube", "zona"):
+                for sid in ("suara", "gambar", "discord", "shell", "opencode", "youtube", "zona"):
                     STEPS[sid](s)
     except KeyboardInterrupt:
         say()

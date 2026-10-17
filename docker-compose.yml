@@ -28,10 +28,16 @@ services:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN}
     volumes:
       - ./workspace:/workspace
+      # Sesi & status OpenCode (volume bernama: tak terlihat dari /workspace).
+      - opencode-state:/home/agent/.local/share/opencode
     # Port TIDAK dibuka ke host; hanya bisa diakses service inspire.
     expose: ["8765"]
-    mem_limit: 512m
-    cpus: 1.0
+    # OpenCode memakai ±600MB saat bekerja. VPS 1GB: turunkan (SANDBOX_MEM=512m) dan jangan pakai /opencode.
+    mem_limit: ${SANDBOX_MEM:-1g}
+    cpus: ${SANDBOX_CPUS:-2.0}
     pids_limit: 256
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
+
+volumes:
+  opencode-state:

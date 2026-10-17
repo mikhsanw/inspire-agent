@@ -76,6 +76,11 @@ class Config:
     task_max_iterations: int = 60
     task_max_minutes: int = 30
     task_progress_seconds: int = 45
+    opencode_bin: str = "opencode"        # nama/path biner di dalam sandbox
+    opencode_model: str = ""              # provider/model; kosong = OpenCode memilih
+    opencode_key: str = ""                # key KHUSUS OpenCode (opsional, model berbayar); masuk ke sandbox
+    opencode_max_steps: int = 100
+    opencode_poll: float = 2.0
     request_timeout: float = 75
     chain_timeout: float = 150
     timezone: str = "Asia/Jakarta"
@@ -117,6 +122,7 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
     agent = raw.get("agent", {})
     shell = raw.get("shell", {})
     web = raw.get("web", {})
+    ocfg = raw.get("opencode", {}) or {}
     md = raw.get("media", {})
     stt = md.get("stt", {})
 
@@ -155,6 +161,11 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
         task_max_iterations=int(agent.get("task_max_iterations", 60)),
         task_max_minutes=int(agent.get("task_max_minutes", 30)),
         task_progress_seconds=int(agent.get("task_progress_seconds", 45)),
+        opencode_bin=ocfg.get("bin", "opencode"),
+        opencode_model=ocfg.get("model", "") or "",
+        opencode_key=ocfg.get("key", "") or "",
+        opencode_max_steps=int(ocfg.get("max_steps", 100)),
+        opencode_poll=float(ocfg.get("poll_seconds", 2.0)),
         request_timeout=agent.get("request_timeout", 75),
         chain_timeout=agent.get("chain_timeout", 150),
         timezone=raw.get("timezone", "Asia/Jakarta"),

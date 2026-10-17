@@ -50,7 +50,7 @@ def _hhmm(ts: float) -> str:
 MAX_LEN = 4000  # batas Telegram 4096
 MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
 COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status",
-            "caveman", "kunci", "riwayat", "rollback", "proyek", "tugas", "stop", "diff", "batalkan"]
+            "caveman", "kunci", "riwayat", "rollback", "proyek", "tugas", "opencode", "stop", "diff", "batalkan"]
 
 
 class TelegramGateway(Gateway):

@@ -154,6 +154,68 @@ async def _wait_pair(token: str, code: str, minutes: int = 10) -> dict | None:
     raise KeyboardInterrupt  # kelamaan → anggap dilewati
 
 
+def _pick_openrouter() -> str | None:
+    say("Mengambil daftar model gratis yang mendukung tool…")
+    free = run(checks.openrouter_free_models())
+    if not free:
+        bad("Gagal ambil daftar. Coba lagi nanti.")
+        return None
+    i = choose("Pilih model", [m.removesuffix(":free") for m in free], allow_skip=False)
+    return free[i]
+
+
+def _setup_one(s: Settings, p: S.Preset) -> bool:
+    """Satu penyedia: kumpulkan data, tes, dan kalau gagal ulang HANYA bagian yang salah.
+    False = kembali ke daftar penyedia."""
+    key, model, base = "", "", ""
+    if p.id == "custom":
+        base = ask("URL API (OpenAI-compatible), mis. https://api.contoh.com/v1")
+        model = ask("Nama model")
+        key = ask_secret("API key (kosongkan kalau tak perlu)")
+        if not base or not model:
+            return False
+    else:
+        if not s.key(p.key) or yes(f"Ganti key {p.key}?", False):
+            say(f"Ambil key di: {c(p.key_url, '4')}")
+            key = ask_secret(f"Tempel {p.key}")
+            if not key and not s.key(p.key):
+                return False
+        if p.id == "openrouter":
+            model = _pick_openrouter()
+            if not model:
+                return False
+
+    while True:
+        say("Mengetes model…")
+        res, msg = run(S.add_preset_model(s, p, key=key, model=model, api_base=base))
+        if res:
+            ok(msg)
+            return True
+        prob = S.explain_model_error(msg, p.id)
+        bad(prob.hint)
+        say(c("  detail: " + " ".join(msg.split())[:220], "2"))
+        say(c("  (Enter kosong = kembali ke daftar penyedia)", "2"))
+        if prob.field == "key":
+            key = ask_secret(f"Tempel ulang key {p.label.split(' — ')[0]}")
+            if not key:
+                return False
+        elif prob.field == "model" and p.id == "custom":
+            model = ask("Nama model yang benar", "")
+            if not model:
+                return False
+        elif prob.field == "model" and p.id == "openrouter":
+            model = _pick_openrouter()
+            if not model:
+                return False
+        elif prob.field == "url" and p.id == "custom":
+            new = ask("URL API", base)
+            if not new:
+                return False
+            base = new
+        else:  # provider / limit / other, atau model yang namanya tetap (preset)
+            return False
+
+
 def step_model(s: Settings) -> bool:
     head("Model AI")
     models = (s.get("models.list") or {})
@@ -168,36 +230,9 @@ def step_model(s: Settings) -> bool:
             s.skip("model")
             say(c("⏸ dilewati — bot belum bisa menjawab sampai model diisi.", "33"))
             return False
-        p = S.PRESETS[idx]
-        key, model, base = "", "", ""
-        if p.id == "custom":
-            base = ask("URL API (OpenAI-compatible), mis. https://opencode.ai/zen/v1")
-            model = ask("Nama model")
-            key = ask_secret("API key (kosongkan kalau tak perlu)")
-            if not base or not model:
-                continue
-        else:
-            if not s.key(p.key) or yes(f"Ganti key {p.key}?", False):
-                say(f"Ambil key di: {c(p.key_url, '4')}")
-                key = ask_secret(f"Tempel {p.key}")
-                if not key and not s.key(p.key):
-                    continue
-        if p.id == "openrouter":
-            say("Mengambil daftar model gratis yang mendukung tool…")
-            free = run(checks.openrouter_free_models())
-            if not free:
-                bad("Gagal ambil daftar. Coba lagi nanti.")
-                continue
-            i = choose("Pilih model", [m.removesuffix(":free") for m in free], allow_skip=False)
-            model = free[i]
-        say("Mengetes model…")
-        res, msg = run(S.add_preset_model(s, p, key=key, model=model, api_base=base))
-        if res:
-            ok(msg)
+        if _setup_one(s, S.PRESETS[idx]):
             if not yes("Tambah model cadangan (dipakai kalau yang utama error/limit)?", False):
                 return True
-        else:
-            bad(msg)
 
 
 def step_shell(s: Settings) -> None:

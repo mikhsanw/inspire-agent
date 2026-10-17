@@ -6,6 +6,7 @@ dan menampilkan; logika ada di sini.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -84,15 +85,49 @@ async def save_key(settings: Settings, section: str, value: str) -> tuple[bool, 
     return True, msg
 
 
+@dataclass
+class ModelProblem:
+    field: str   # key | model | url | provider | limit | other — bagian mana yang perlu diperbaiki
+    hint: str
+
+
+def explain_model_error(msg: str, preset_id: str = "") -> ModelProblem:
+    """Terjemahkan error mentah litellm jadi petunjuk + bagian yang harus diulang."""
+    m = msg.lower()
+    if "free tier can only be use" in m or "only be used from within" in m:
+        return ModelProblem("provider",
+            "Penyedia ini melarang tier gratisnya dipakai dari aplikasi lain. Pilih penyedia lain "
+            "(OpenRouter / Gemini / DeepSeek), atau model berbayar milik penyedia itu.")
+    if any(x in m for x in ("401", "unauthorized", "authentication", "invalid api key", "incorrect api key",
+                            "invalid x-api-key", "api_key client option", "api key not valid", "permission denied")):
+        return ModelProblem("key", "Key ditolak: salah, kedaluwarsa, atau belum diisi. Tempel ulang key-nya.")
+    if any(x in m for x in ("429", "rate limit", "rate_limit", "quota", "resource_exhausted", "insufficient")):
+        return ModelProblem("limit",
+            "Key valid, tapi kena limit / saldo habis. Coba lagi nanti, atau pilih model lain.")
+    if any(x in m for x in ("is unavailable", "model_not_found", "does not exist", "not found", "404",
+                            "unknown model", "invalid model", "unsupported model", "llm provider not provided")):
+        extra = " Cek daftar nama model di <URL>/models." if preset_id == "custom" else ""
+        return ModelProblem("model",
+            "Servernya menjawab, tapi nama model itu tidak ada, jadi URL dan key kemungkinan benar. "
+            "Periksa ejaan nama model." + extra)
+    if any(x in m for x in ("connect", "getaddrinfo", "name or service", "timed out", "timeout", "ssl",
+                            "unreachable", "connection error", "refused")):
+        return ModelProblem("url", "Tak bisa menghubungi server. Periksa URL (harus diawali http/https) dan koneksi.")
+    if "tool" in m and ("not support" in m or "unsupported" in m):
+        return ModelProblem("model", "Model ini tidak mendukung tool calling, padahal agent membutuhkannya. Pilih model lain.")
+    return ModelProblem("other", "Penyebabnya tak dikenali. Lihat detail di bawah, atau pilih penyedia lain.")
+
+
 async def add_preset_model(
     settings: Settings, preset: Preset, key: str = "", model: str = "",
     api_base: str = "", make_default: bool = True,
 ) -> tuple[bool, str]:
-    """Simpan key (kalau ada), tes model, daftarkan. key kosong = pakai yang tersimpan."""
-    if preset.key and key:
-        settings.set_key(preset.key, key.strip())
+    """Tes model, lalu simpan. key kosong = pakai yang tersimpan.
+    Key baru HANYA disimpan kalau tesnya lolos, supaya key salah tak tertinggal."""
+    key = key.strip()
     name = preset.id
     spec: dict = {"model": model or preset.model}
+    env_name = preset.key
     if preset.id == "openrouter":
         spec["model"] = "openrouter/" + model.removeprefix("openrouter/")
         name = "or-" + model.split("/")[-1].removesuffix(":free")[:24]
@@ -100,17 +135,26 @@ async def add_preset_model(
         name = "custom-" + model.split("/")[-1][:24]
         spec = {"model": "openai/" + model.removeprefix("openai/"), "api_base": api_base}
         if key:
-            env = "CUSTOM_" + "".join(c if c.isalnum() else "_" for c in name.upper())
-            settings.set_key(env, key.strip())
-            spec["api_key"] = "${" + env + "}"
+            env_name = "CUSTOM_" + "".join(c if c.isalnum() else "_" for c in name.upper())
+            spec["api_key"] = "${" + env_name + "}"
+        else:
+            spec["api_key"] = "none"  # server lokal (Ollama dll) tanpa key; litellm tetap butuh nilai
     if preset.vision:
         spec["vision"] = True
     test = dict(spec)
-    if "api_key" in test:
-        test["api_key"] = key.strip()
+    if preset.id == "custom":
+        test["api_key"] = key or "none"
+
+    prev = os.environ.get(preset.key) if preset.key else None
+    if preset.key and key:
+        os.environ[preset.key] = key  # litellm membaca key preset dari env
     ok, msg = await checks.model(test)
     if not ok:
+        if preset.key and key:
+            os.environ.pop(preset.key, None) if prev is None else os.environ.__setitem__(preset.key, prev)
         return False, msg
+    if key and env_name:
+        settings.set_key(env_name, key)
     settings.add_model(name, spec, make_default)
     settings.skip("model", False)
     return True, f"{name} siap ({msg})"

@@ -257,7 +257,10 @@ class TelegramSetup:
             self.app.reload()
             await self._send(update, f"✅ {msg}\nLangsung aktif.", kb([("➕ Tambah cadangan", "su:sec:model"), BACK]))
         else:
-            await self._send(update, f"❌ Model gagal dites: {msg}", kb([("↻ Coba lagi", "su:sec:model"), BACK]))
+            prob = S.explain_model_error(msg)
+            detail = " ".join(msg.split())[:200]
+            await self._send(update, f"❌ Model gagal dites.\n\n{prob.hint}\n\nDetail: {detail}",
+                             kb([("↻ Coba lagi", "su:sec:model"), BACK]))
 
     # --- teks / file masuk ----------------------------------------------------
 

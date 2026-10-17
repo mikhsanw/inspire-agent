@@ -56,20 +56,21 @@ def register_core(reg: Registry, memory: Memory, store: Store) -> None:
     )
 
     def search_history(ctx: ToolContext, query: str, limit: int = 8) -> str:
-        hits = store.search(query, ctx.chat_id, limit=min(limit, 20))
+        hits = store.search(query, None, limit=min(limit, 20))
         if not hits:
             return "Tidak ketemu."
         lines = []
         for h in hits:
             when = dt.datetime.fromtimestamp(h["created_at"]).strftime("%Y-%m-%d %H:%M")
-            lines.append(f"[{when} sesi#{h['session_id']} {h['role']}] {h['snip']}")
+            where = "discord" if h["chat_id"].startswith("dc:") else "telegram"
+            lines.append(f"[{when} {where} sesi#{h['session_id']} {h['role']}] {h['snip']}")
         return "\n".join(lines)
 
     reg.add(
         Tool(
             name="search_history",
             description=(
-                "Cari di seluruh riwayat chat lama (semua sesi) dengan kata kunci. "
+                "Cari di seluruh riwayat chat lama (semua sesi, Telegram & Discord) dengan kata kunci. "
                 "Pakai kalau user menyebut hal dari obrolan dulu yang tidak ada di "
                 "memori atau konteks sekarang."
             ),

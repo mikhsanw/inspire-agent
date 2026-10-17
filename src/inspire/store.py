@@ -157,14 +157,15 @@ class Store:
         ).fetchall()
         return [(r["id"], _row_to_msg(r)) for r in rows]
 
-    def search(self, query: str, chat_id: str, limit: int = 8) -> list[dict]:
+    def search(self, query: str, chat_id: str | None = None, limit: int = 8) -> list[dict]:
+        """chat_id None = semua chat (satu pemilik, lintas Telegram/Discord)."""
         rows = self.db.execute(
-            """SELECT m.id, m.session_id, m.role, m.created_at,
+            """SELECT m.id, m.session_id, m.chat_id, m.role, m.created_at,
                       snippet(messages_fts, 0, '[', ']', '…', 24) AS snip
                FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
-               WHERE messages_fts MATCH ? AND m.chat_id=?
+               WHERE messages_fts MATCH ? AND (? IS NULL OR m.chat_id=?)
                ORDER BY rank LIMIT ?""",
-            (_fts_query(query), chat_id, limit),
+            (_fts_query(query), chat_id, chat_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from .config import Config
 from .llm import LLM, AllModelsFailed
 from .media import Media, MediaError, data_url
+from .skills import Skills
 from .memory import Memory
 from .store import Session, Store
 from .store import Job
@@ -22,7 +23,7 @@ from .tools import Confirm, Registry, ToolContext
 log = logging.getLogger(__name__)
 
 DEFAULT_SOUL = """Kamu adalah inspire, asisten AI pribadi milik satu orang (user).
-Kamu ngobrol lewat Telegram. Jawab singkat, jelas, dan dalam bahasa user.
+Kamu ngobrol lewat Telegram atau Discord. Jawab singkat, jelas, dan dalam bahasa user.
 
 Memori:
 - Di bawah ada CATATAN AGENT dan TENTANG USER. Itu memori jangka panjangmu.
@@ -30,6 +31,13 @@ Memori:
   mengoreksimu, simpan dengan tool `memory`. Jangan tanya izin untuk itu.
 - Kalau user menyebut obrolan lama yang tidak kamu lihat, pakai `search_history`.
 - Perubahan memori baru terlihat di blok memori pada sesi berikutnya.
+
+Skill (resep kerja):
+- Daftar SKILL di bawah adalah cara kerja yang pernah kamu pelajari. Sebelum
+  mengerjakan tugas yang cocok dengan salah satunya, `skill view` dulu lalu ikuti.
+- Setelah berhasil tugas yang sulit, banyak langkah, atau sempat salah jalan —
+  atau user mengajarimu cara kerja — simpan dengan `skill create`. Kalau skill
+  ternyata salah/usang, `skill update`. Kamu tak perlu minta izin.
 
 Waktu & jadwal:
 - Tiap pesan user diawali stempel waktu [YYYY-MM-DD HH:MM Hari]. Itu waktu
@@ -67,9 +75,11 @@ class Agent:
         llm: LLM,
         tools: Registry,
         media: Media | None = None,
+        skills: Skills | None = None,
     ):
         self.cfg = cfg
         self.media = media
+        self.skills = skills
         self.store = store
         self.memory = memory
         self.llm = llm
@@ -104,9 +114,10 @@ class Agent:
     def _system(self, s: Session) -> str:
         if s.id not in self._snapshots:
             today = self.now().strftime("%A, %d %B %Y") + f" ({self.cfg.timezone})"
-            self._snapshots[s.id] = (
-                f"{self._soul()}\nSesi dimulai: {today}.\n\n{self.memory.snapshot()}"
-            )
+            snap = f"{self._soul()}\nSesi dimulai: {today}.\n\n{self.memory.snapshot()}"
+            if self.skills:
+                snap += f"\n\n## SKILL\n{self.skills.index()}"
+            self._snapshots[s.id] = snap
         system = self._snapshots[s.id]
         if s.summary:
             system += f"\n\n## RINGKASAN OBROLAN SEBELUMNYA DI SESI INI\n{s.summary}"

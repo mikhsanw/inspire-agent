@@ -1,11 +1,16 @@
 # inspire
 
-Agent AI pribadi ala Hermes. Telegram, memori jangka panjang, model apa saja.
-Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 3 (suara, gambar, file, video)**.
+Agent AI pribadi ala Hermes. Telegram + Discord, memori jangka panjang, model apa saja.
+Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 4 selesai (skill otomatis + Discord)** — semua fase di SPEC sudah dibangun.
 
 ## Jalan
 
-1. Buat bot di @BotFather → dapat token. Cek user ID kamu di @userinfobot.
+1. Gateway (minimal satu):
+   - **Telegram**: buat bot di @BotFather → token. User ID kamu dari @userinfobot.
+   - **Discord**: Developer Portal → New Application → Bot → token; nyalakan
+     *Message Content Intent*; undang bot (scope `bot`, izin kirim pesan). User ID:
+     Settings → Advanced → Developer Mode → klik kanan namamu → Copy User ID.
+     Bot jawab di DM, atau di server kalau di-mention.
 2. Siapkan file:
    ```bash
    cp .env.example .env
@@ -23,13 +28,20 @@ Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 3 (suara, gambar, file, vide
    (`SANDBOX_TOKEN=... WORKSPACE=./workspace uv run python -m inspire.sandbox_server`,
    `sandbox_url: http://127.0.0.1:8765`) — **tidak terisolasi**, hanya untuk dev.
 
-## Perintah Telegram
+## Perintah
+
+Telegram pakai `/`, Discord pakai `!` (bisa diubah di config).
 
 - `/new` — sesi baru
 - `/model` — lihat / ganti model (`/model or-free`)
 - `/memory` — isi memori
 - `/jobs` — jadwal aktif
+- `/skills` — daftar skill + riwayat perubahan
+- `/skillundo` — batalkan perubahan skill terakhir
 - `/help`
+
+Memori, skill, dan riwayat dipakai bersama di Telegram dan Discord (satu pemilik).
+Jadwal dikirim ke chat tempat ia dibuat.
 
 ## Contoh
 
@@ -41,6 +53,13 @@ Rencana lengkap: [SPEC.md](SPEC.md). Status: **Fase 3 (suara, gambar, file, vide
 - kirim foto struk → model vision lihat langsung, atau dideskripsikan dulu (Gemini)
 - kirim PDF/DOCX/XLSX → teks diekstrak; salinan file ada di sandbox `/workspace/inbox`
 - "ringkas video ini <link>" → subtitle via yt-dlp, kalau tak ada → audio → Whisper
+
+## Skill
+
+Setelah berhasil tugas sulit, agent menulis resep kerjanya sendiri ke
+`data/skills/<nama>.md`. Daftar skill (nama + deskripsi) masuk prompt; isinya dibaca
+saat perlu. Tiap perubahan dikirim sebagai notifikasi dan di-commit ke repo git di
+`data/skills/` — `/skillundo` untuk membatalkan, atau `git -C data/skills log`.
 
 ## YouTube minta login?
 
@@ -64,6 +83,7 @@ Semua di `data/`:
 - `inspire.db` — sesi + riwayat chat (FTS5)
 - `MEMORY.md`, `USER.md` — memori yang agent kurasi
 - `SOUL.md` (opsional) — ganti kepribadian default
+- `skills/` — skill yang agent tulis (repo git sendiri)
 
 ## Test
 
@@ -83,6 +103,7 @@ src/inspire/
   scheduler.py    APScheduler + tabel jobs
   sandbox_server.py  server exec di container sandbox
   media.py        STT, deskripsi gambar, ekstrak file, transkrip video
-  tools/          core, schedule, web, shell, video
-  gateway/        base + telegram (tombol konfirmasi)
+  skills.py       skill markdown + git
+  tools/          core, schedule, web, shell, video, skill
+  gateway/        base (perintah & media bersama), telegram, discord
 ```

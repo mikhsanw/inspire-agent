@@ -2,9 +2,15 @@
 data_dir: data
 timezone: Asia/Jakarta
 
+# Isi minimal satu gateway. Token kosong = gateway itu mati.
 telegram:
   token: ${TELEGRAM_BOT_TOKEN}
   allowed_user_ids: ${ALLOWED_USER_IDS}   # "12345" atau "12345,67890"
+
+discord:
+  token: ${DISCORD_BOT_TOKEN}
+  allowed_user_ids: ${DISCORD_USER_IDS}   # user ID Discord kamu (Developer Mode → Copy User ID)
+  command_prefix: "!"                     # !new, !model, !skills, …
 
 models:
   default: deepseek

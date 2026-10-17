@@ -20,6 +20,9 @@ class FakeLLM:
         self.models = {"fake": ModelCfg(model="fake")}
         self.active, self.fallback = "fake", []
 
+    def set_active(self, name):
+        return name in self.models
+
     async def complete(self, messages, tools=None):
         self.seen.append(messages)
         if tools is None:  # panggilan ringkas

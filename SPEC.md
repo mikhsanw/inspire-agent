@@ -53,7 +53,7 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
 - `video_url` → `yt-dlp` subtitle, kalau tak ada → audio → Whisper.
 - Semua hasil teks disimpan di riwayat (bisa dicari).
 
-### Fase 4 — belajar
+### Fase 4 — belajar ✅
 - Skill otomatis `skills/*.md` (judul + ringkasan masuk prompt, isi dibaca saat
   perlu), folder di-git, notif tiap perubahan.
 - Adapter Discord.

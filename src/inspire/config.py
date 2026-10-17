@@ -41,6 +41,9 @@ class Config:
     models: dict[str, ModelCfg]
     default_model: str
     fallback: list[str]
+    discord_token: str = ""
+    discord_user_ids: list[int] = field(default_factory=list)
+    discord_prefix: str = "!"
     memory_chars: int = 2200
     user_chars: int = 1400
     max_context_tokens: int = 48000
@@ -58,6 +61,15 @@ class Config:
     search_backends: list[str] = field(default_factory=lambda: ["duckduckgo", "bing", "yahoo"])
     media: MediaCfg = field(default_factory=MediaCfg)
     inbox_dir: Path | None = None  # salinan file kiriman user, terlihat di sandbox
+
+
+def _ids(raw) -> list[int]:
+    """Boleh list YAML [1, 2] atau string "1,2" (mis. dari ${ALLOWED_USER_IDS})."""
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raw = str(raw).replace(",", " ").split()
+    return [int(x) for x in raw if str(x).strip()]
 
 
 def load(path: Path | str) -> Config:
@@ -78,16 +90,15 @@ def load(path: Path | str) -> Config:
     default = m.get("default") or next(iter(models))
     fallback = [n for n in (m.get("fallback") or []) if n in models]
 
-    # Boleh list YAML [1, 2] atau string "1,2" (mis. dari ${ALLOWED_USER_IDS}).
-    raw_ids = tg.get("allowed_user_ids") or []
-    if not isinstance(raw_ids, list):
-        raw_ids = str(raw_ids).replace(",", " ").split()
-    ids = [int(x) for x in raw_ids if str(x).strip()]
+    dc = raw.get("discord", {})
 
     return Config(
         data_dir=Path(raw.get("data_dir", "data")),
         telegram_token=tg.get("token", ""),
-        allowed_user_ids=ids,
+        allowed_user_ids=_ids(tg.get("allowed_user_ids")),
+        discord_token=dc.get("token", ""),
+        discord_user_ids=_ids(dc.get("allowed_user_ids")),
+        discord_prefix=dc.get("command_prefix", "!"),
         models=models,
         default_model=default,
         fallback=fallback,

@@ -1,7 +1,7 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
-# ffmpeg: kecilkan audio video sebelum dikirim ke Whisper.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg: kecilkan audio video sebelum dikirim ke Whisper. git: versi skill.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

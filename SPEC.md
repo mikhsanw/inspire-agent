@@ -82,3 +82,13 @@ jadwal tak bisa mengubah server.
 Keputusan: tugas coding di latar belakang (60 langkah / 30 menit), per proyek git di sandbox, titik simpan
 commit otomatis sebelum & sesudah, `/diff`, `/batalkan` (hanya tugas terbaru, lewat tombol), `/stop`.
 Tanpa GitHub (push tetap di luar cakupan). Hanya sandbox: tool server/DB/jadwal tak dipakai di mode tugas.
+
+### Fase 7 — sistem model ✅
+
+- **Katalog models.dev** (seperti OpenCode) menggantikan preset buatan tangan: pilih penyedia → key (dites dulu, baru
+  disimpan) → model dengan pencarian, filter $0, urutan; konteks, harga, vision tercatat di setelan. Penyedia
+  langganan / tier gratis terkunci disembunyikan. "Gratis" tidak disimpulkan dari katalog.
+- **Fallback tangguh** (seperti Hermes: timeout per model, rantai): cooldown eksponensial untuk limit/server, blokir
+  30 menit untuk key/nama model/diblokir, batas waktu per model + total rantai, status di `/model`,
+  anggaran konteks per model, catatan "dijawab oleh".
+- Tidak dikerjakan (sengaja): model per peran (chat/ringkas/tugas/vision) dan pemantauan biaya (`/biaya`).

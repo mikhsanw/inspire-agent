@@ -29,8 +29,24 @@ class ModelCfg:
     model: str                    # nama litellm, mis. "deepseek/deepseek-chat"
     api_base: str | None = None   # untuk endpoint OpenAI-compatible (OpenCode Zen, dll)
     api_key: str | None = None    # biasanya "${NAMA_ENV}"; kosong = litellm baca env sendiri
-    vision: bool = False          # dipakai fase 3
+    vision: bool = False          # bisa melihat gambar → gambar dikirim langsung
+    context: int = 0              # ukuran konteks model (token); 0 = tak diketahui
+    timeout: float = 0            # detik per panggilan; 0 = pakai agent.request_timeout
+    cost_in: float | None = None  # dolar per 1 juta token (info katalog, untuk tampilan)
+    cost_out: float | None = None
     extra: dict = field(default_factory=dict)  # diteruskan ke litellm apa adanya
+
+
+def describe(m: "ModelCfg") -> str:
+    """Ringkasan satu baris untuk /model: nama provider/model · konteks · harga · 👁."""
+    parts = [m.model]
+    if m.context:
+        parts.append(f"{m.context // 1000}k")
+    if m.cost_in is not None and m.cost_out is not None:
+        parts.append("$0" if m.cost_in == 0 and m.cost_out == 0 else f"${m.cost_in:g}/${m.cost_out:g}")
+    if m.vision:
+        parts.append("👁")
+    return " · ".join(parts)
 
 
 @dataclass
@@ -60,7 +76,8 @@ class Config:
     task_max_iterations: int = 60
     task_max_minutes: int = 30
     task_progress_seconds: int = 45
-    request_timeout: float = 120
+    request_timeout: float = 75
+    chain_timeout: float = 150
     timezone: str = "Asia/Jakarta"
     sandbox_url: str = ""         # kosong = tool shell mati
     sandbox_token: str = ""
@@ -138,7 +155,8 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
         task_max_iterations=int(agent.get("task_max_iterations", 60)),
         task_max_minutes=int(agent.get("task_max_minutes", 30)),
         task_progress_seconds=int(agent.get("task_progress_seconds", 45)),
-        request_timeout=agent.get("request_timeout", 120),
+        request_timeout=agent.get("request_timeout", 75),
+        chain_timeout=agent.get("chain_timeout", 150),
         timezone=raw.get("timezone", "Asia/Jakarta"),
         sandbox_url=shell.get("sandbox_url", ""),
         sandbox_token=shell.get("token", ""),

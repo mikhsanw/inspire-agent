@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from ..agent import Agent
+from ..config import describe
 from ..media import MediaError
 
 log = logging.getLogger(__name__)
@@ -162,16 +163,27 @@ async def command(app, chat_id: str, name: str, args: list[str], p: str, confirm
         return f"Sesi baru #{agent.new_session(chat_id).id} dimulai."
     if name == "model":
         llm = agent.llm
+        if args and args[0] == "reset":
+            llm.reset()
+            return "Catatan error semua model dihapus. Dicoba lagi dari awal."
         if args:
             if llm.set_active(args[0]):
-                return f"Model aktif: {args[0]} ({llm.models[args[0]].model})"
+                return f"Model aktif: {args[0]} ({describe(llm.models[args[0]])})"
             return f"Tak ada model '{args[0]}'."
-        lines = [
-            f"{'▶' if n == llm.active else ' '} {n} — {c.model}"
-            f"{' (fallback)' if n in llm.fallback else ''}{' 👁' if c.vision else ''}"
-            for n, c in llm.models.items()
-        ]
-        return "Model:\n" + "\n".join(lines) + f"\n\n{p}model <nama> untuk ganti"
+        if not llm.models:
+            return f"Belum ada model. Atur dengan {p}setup (Telegram) atau `inspire setup model`."
+        icons = {"ok": "✅", "cooling": "⏳", "blocked": "⛔"}
+        lines = []
+        for n, c in llm.models.items():
+            st, detail = llm.status(n)
+            tail = f" · {icons[st]} {detail}".rstrip() if st != "ok" else ""
+            role = " (cadangan)" if n in llm.fallback and n != llm.active else ""
+            lines.append(f"{'▶' if n == llm.active else '  '} {n}{role}\n     {describe(c)}{tail}")
+        hint = ""
+        if any(llm.status(n)[0] == "blocked" for n in llm.models):
+            hint = f"\n⛔ = perlu dibereskan (key/nama model). {p}setup atau `inspire setup model`."
+        return ("Model:\n" + "\n".join(lines) +
+                f"\n\n{p}model <nama> ganti · {p}model reset hapus catatan error" + hint)
     if name == "memory":
         return agent.memory.snapshot()
     if name == "jobs":

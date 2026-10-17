@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from .. import catalog as catalog_mod
 from .. import setup as S
 from ..settings import Settings
 from . import checks
@@ -154,68 +155,164 @@ async def _wait_pair(token: str, code: str, minutes: int = 10) -> dict | None:
     raise KeyboardInterrupt  # kelamaan → anggap dilewati
 
 
-def _pick_openrouter() -> str | None:
-    say("Mengambil daftar model gratis yang mendukung tool…")
-    free = run(checks.openrouter_free_list())
-    if not free:
-        bad("Gagal ambil daftar. Coba lagi nanti.")
-        return None
-    say(c(f"{len(free)} model gratis yang mendukung tool (angka = ukuran konteks). Kualitasnya bervariasi: "
-          "coba satu, dan tambah yang lain sebagai cadangan.", "2"))
-    labels = [f"{m.removesuffix(':free')}  ({ctx // 1000}k)" for m, ctx in free]
-    return free[choose("Pilih model", labels, allow_skip=False)][0]
+PAGE = 12
 
 
-def _setup_one(s: Settings, p: S.Preset) -> bool:
-    """Satu penyedia: kumpulkan data, tes, dan kalau gagal ulang HANYA bagian yang salah.
-    False = kembali ke daftar penyedia."""
-    key, model, base = "", "", ""
-    if p.id == "custom":
-        base = ask("URL API (OpenAI-compatible), mis. https://api.contoh.com/v1")
-        model = ask("Nama model")
-        key = ask_secret("API key (kosongkan kalau tak perlu)")
-        if not base or not model:
-            return False
-    else:
-        if not s.key(p.key) or yes(f"Ganti key {p.key}?", False):
-            say(f"Ambil key di: {c(p.key_url, '4')}")
-            key = ask_secret(f"Tempel {p.key}")
-            if not key and not s.key(p.key):
-                return False
-        if p.id == "openrouter":
-            model = _pick_openrouter()
-            if not model:
-                return False
+def _catalog(s: Settings, force: bool = False):
+    say(c("Mengambil katalog model (models.dev)…", "2"))
+    cat = run(catalog_mod.load(s.dir / "catalog.json", force=force))
+    if not cat:
+        bad("Katalog tak bisa diambil (periksa koneksi). Pakai 'Endpoint sendiri' dulu, atau coba lagi nanti.")
+    return cat
 
+
+def _pick_provider(cat):
+    """→ CProvider | 'custom' | None (lewati/kembali)."""
+    popular = cat.popular() if cat else []
+    for i, p in enumerate(popular, 1):
+        free = len(cat.models(p.id, free=True))
+        note = f"{free} model $0" if free else ""
+        say(f"  {i:>2}) {p.name}{c('   ' + note, '2') if note else ''}")
+    say(c("   e) Endpoint sendiri (Ollama, LM Studio, vLLM, …)    0) Lewati", "2"))
+    say(c("   atau ketik nama penyedia lain untuk mencari (ada ±230)", "2"))
+    while True:
+        ans = ask("Pilih", "1" if popular else "e").strip()
+        if ans == "0":
+            return None
+        if ans.lower() == "e":
+            return "custom"
+        if ans.isdigit() and 1 <= int(ans) <= len(popular):
+            return popular[int(ans) - 1]
+        if ans and cat:
+            found = cat.search_providers(ans)
+            if not found:
+                say(f"Tak ada penyedia '{ans}'. {catalog_mod.HIDDEN_NOTE}")
+            elif len(found) == 1:
+                return found[0]
+            else:
+                i = choose("Penyedia", [f"{p.name} ({p.id})" for p in found[:30]])
+                if i is not None:
+                    return found[i]
+
+
+def _pick_model(cat, prov):
+    """Daftar model dengan pencarian: angka = pilih, kata = cari, g = $0 saja, h/t/k = urut."""
+    query, free, sort, page = "", False, "baru", 0
+    while True:
+        items = cat.models(prov.id, query, free, sort)
+        pages = max(1, -(-len(items) // PAGE))
+        page = min(page, pages - 1)
+        view = items[page * PAGE:(page + 1) * PAGE]
+        say()
+        say(c(f"{prov.name}: {len(items)} model · urut {catalog_mod.SORTS[sort]}"
+              + (" · hanya $0" if free else "") + (f" · cari '{query}'" if query else "")
+              + f" · hal {page + 1}/{pages}", "1"))
+        if not view:
+            say("  (tak ada yang cocok)")
+        for i, m in enumerate(view, page * PAGE + 1):
+            say(f"  {i:>3}) {m.label()}")
+        say(c("  harga = $ per 1 juta token (input/output) · 👁 bisa lihat gambar · $0 menurut katalog; "
+              "syarat tier gratis ditentukan penyedia", "2"))
+        ans = ask("Nomor | kata = cari | g = $0 saja | h/t/k = urut harga/terbaru/konteks | m = lagi | Enter = kembali").strip()
+        low = ans.lower()
+        if not ans:
+            return None
+        if ans.isdigit() and 1 <= int(ans) <= len(items):
+            return items[int(ans) - 1]
+        if low == "g":
+            free, page = not free, 0
+        elif low in ("h", "t", "k"):
+            sort, page = {"h": "harga", "t": "baru", "k": "konteks"}[low], 0
+        elif low == "m":
+            page = (page + 1) % pages
+        elif ans == "-":
+            query, free, page = "", False, 0
+        else:
+            query, page = ans, 0
+
+
+def _fix_loop(s: Settings, label: str, attempt, on_model=None, on_key=None) -> bool:
+    """Jalankan attempt() sampai lolos; kalau gagal jelaskan dan ulang HANYA bagian yang salah.
+    attempt() → (ok, pesan). on_key/on_model() → True kalau bagian itu sudah diperbaiki."""
     while True:
         say("Mengetes model…")
-        res, msg = run(S.add_preset_model(s, p, key=key, model=model, api_base=base))
+        res, msg = attempt()
         if res:
             ok(msg)
             return True
-        prob = S.explain_model_error(msg, p.id)
+        prob = S.explain_model_error(msg, "")
         bad(prob.hint)
         say(c("  detail: " + " ".join(msg.split())[:220], "2"))
         say(c("  (Enter kosong = kembali ke daftar penyedia)", "2"))
-        if prob.field == "key":
-            key = ask_secret(f"Tempel ulang key {p.label.split(' — ')[0]}")
-            if not key:
+        if prob.field == "key" and on_key and on_key(label):
+            continue
+        if prob.field in ("model", "tools") and on_model and on_model():
+            continue
+        return False
+
+
+def _setup_catalog(s: Settings, cat, prov) -> bool:
+    state = {"key": ""}
+    if prov.key_required:
+        have = bool(s.key(prov.key_env))
+        if have:
+            say(f"Key {prov.key_env} sudah tersimpan dan dipakai ulang.")
+        if not have or yes("Ganti key?", False):
+            say(f"Ambil key di: {c(catalog_mod.KEY_URL.get(prov.id, 'situs ' + prov.name), '4')}")
+            state["key"] = ask_secret(f"Tempel {prov.key_env}")
+            if not state["key"] and not have:
                 return False
-        elif prob.field == "model" and p.id == "custom":
-            model = ask("Nama model yang benar", "")
-            if not model:
-                return False
-        elif prob.field == "model" and p.id == "openrouter":
-            model = _pick_openrouter()
-            if not model:
-                return False
-        elif prob.field == "url" and p.id == "custom":
-            new = ask("URL API", base)
+    holder = {"model": _pick_model(cat, prov)}
+    if not holder["model"]:
+        return False
+
+    def attempt():
+        return run(S.add_catalog_model(s, prov, holder["model"], key=state["key"]))
+
+    def on_key(label):
+        new = ask_secret(f"Tempel ulang key {prov.name}")
+        state["key"] = new
+        return bool(new)
+
+    def on_model():
+        holder["model"] = _pick_model(cat, prov)
+        return bool(holder["model"])
+
+    return _fix_loop(s, prov.name, attempt, on_model, on_key)
+
+
+def _setup_custom(s: Settings) -> bool:
+    base = ask("URL API (OpenAI-compatible), mis. http://localhost:11434/v1")
+    model = ask("Nama model")
+    key = ask_secret("API key (kosongkan kalau tak perlu)")
+    if not base or not model:
+        return False
+    st = {"base": base, "model": model, "key": key}
+
+    def attempt():
+        return run(S.add_custom_model(s, st["model"], st["base"], key=st["key"]))
+
+    def on_key(_):
+        st["key"] = ask_secret("Tempel ulang API key")
+        return bool(st["key"])
+
+    def on_model():
+        st["model"] = ask("Nama model yang benar", "")
+        return bool(st["model"])
+
+    # URL salah / tak terjangkau juga bisa diperbaiki tanpa mengulang semuanya
+    def run_attempt():
+        while True:
+            res, msg = attempt()
+            if res or S.explain_model_error(msg).field != "url":
+                return res, msg
+            bad(S.explain_model_error(msg).hint)
+            new = ask("URL API", st["base"])
             if not new:
-                return False
-            base = new
-        else:  # provider / limit / other, atau model yang namanya tetap (preset)
-            return False
+                return False, msg
+            st["base"] = new
+
+    return _fix_loop(s, "endpoint", run_attempt, on_model, on_key)
 
 
 def step_model(s: Settings) -> bool:
@@ -225,16 +322,17 @@ def step_model(s: Settings) -> bool:
         say("Sudah ada: " + ", ".join(models))
         if not yes("Tambah model lain?", False):
             return True
-    say("Wajib minimal satu, supaya bot bisa menjawab. Yang gratis di atas.")
+    say("Wajib minimal satu, supaya bot bisa menjawab. Pilih penyedia (dari katalog models.dev, dipakai juga oleh OpenCode).")
+    cat = _catalog(s)
     while True:
-        idx = choose("Pilih", [p.label for p in S.PRESETS])
-        if idx is None:
+        prov = _pick_provider(cat)
+        if prov is None:
             s.skip("model")
             say(c("⏸ dilewati — bot belum bisa menjawab sampai model diisi.", "33"))
             return False
-        if _setup_one(s, S.PRESETS[idx]):
-            if not yes("Tambah model cadangan (dipakai kalau yang utama error/limit)?", False):
-                return True
+        good = _setup_custom(s) if prov == "custom" else _setup_catalog(s, cat, prov)
+        if good and not yes("Tambah model cadangan (dipakai kalau yang utama error/limit)?", False):
+            return True
 
 
 def step_shell(s: Settings) -> None:
@@ -433,10 +531,10 @@ def doctor(s: Settings) -> int:
     from ..config import from_settings
 
     cfg = from_settings(s)
-    if cfg.default_model:
-        m = cfg.models[cfg.default_model]
-        tests.append((f"Model {cfg.default_model}", checks.model(
-            {"model": m.model, "api_base": m.api_base, "api_key": m.api_key})))
+    for name, m in cfg.models.items():
+        key = m.api_key if m.api_key and m.api_key != "none" else None
+        tests.append((f"Model {name}{' (utama)' if name == cfg.default_model else ''}",
+                      checks.model({"model": m.model, "api_base": m.api_base, "api_key": key})))
 
     async def all_tests():
         return await asyncio.gather(*(t for _, t in tests))

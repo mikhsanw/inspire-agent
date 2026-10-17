@@ -167,9 +167,17 @@ class Agent:
 
     # --- ringkas --------------------------------------------------------
 
+    def _budget(self) -> int:
+        """Anggaran konteks: batas config, tapi tak lebih dari 70% konteks model yang aktif
+        (model kecil seperti 32k/65k tak boleh dijejali 48k token)."""
+        cfg = getattr(self.llm, "models", {}).get(getattr(self.llm, "active", ""))
+        if cfg and cfg.context:
+            return min(self.cfg.max_context_tokens, int(cfg.context * 0.7))
+        return self.cfg.max_context_tokens
+
     async def _maybe_compress(self, s: Session) -> Session:
         msgs, history = self._build(s)
-        limit = self.cfg.max_context_tokens * self.cfg.compress_at
+        limit = self._budget() * self.cfg.compress_at
         if estimate_tokens(msgs) < limit or len(history) <= self.cfg.keep_last:
             return s
 
@@ -293,7 +301,12 @@ class Agent:
             mid = self.store.add_message(s.id, chat_id, {"role": "user", "content": content})
             s = await self._maybe_compress(s)
             ctx = ToolContext(chat_id=chat_id, session_id=s.id, confirm=confirm)
-            return await self._run(s, ctx, exclude=set(), attach={mid: urls} if urls else None)
+            reply = await self._run(s, ctx, exclude=set(), attach={mid: urls} if urls else None)
+            used = getattr(self.llm, "last_used", "")
+            if used and used != self.llm.active and not reply.startswith("⚠️"):
+                why = self.llm.status(self.llm.active)[1] or "gagal"
+                reply += f"\n\n↪ dijawab oleh {used} ({self.llm.active}: {why})"
+            return reply
 
     async def run_job(self, job: Job, confirm: Confirm | None = None) -> str:
         """Jalankan job di sesi terpisah (kind='job'), kembalikan teks untuk user."""

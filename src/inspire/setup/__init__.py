@@ -6,33 +6,17 @@ dan menampilkan; logika ada di sini.
 
 from __future__ import annotations
 
-import os
+import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from ..catalog import resolve
+from ..llm_errors import ModelProblem, explain_model_error  # noqa: F401  (dipakai wizard & Telegram)
 from ..settings import Settings
 from . import checks
 
 
-@dataclass
-class Preset:
-    id: str
-    label: str
-    key: str = ""             # nama env key-nya
-    key_url: str = ""
-    model: str = ""           # kosong = dipilih belakangan (openrouter) / diisi user (custom)
-    vision: bool = False
-
-
-PRESETS = [
-    Preset("openrouter", "OpenRouter — model gratis (daftar akun, tanpa kartu)",
-           "OPENROUTER_API_KEY", "https://openrouter.ai/keys"),
-    Preset("gemini", "Google Gemini Flash — gratis, bisa lihat gambar",
-           "GEMINI_API_KEY", "https://aistudio.google.com/apikey", "gemini/gemini-2.5-flash", True),
-    Preset("deepseek", "DeepSeek — murah & stabil (top-up ~$2)",
-           "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys", "deepseek/deepseek-chat"),
-    Preset("custom", "Lainnya — endpoint OpenAI-compatible (OpenCode Zen, Ollama, …)"),
-]
+CUSTOM_LABEL = "Endpoint sendiri — URL OpenAI-compatible (Ollama, LM Studio, vLLM, server sendiri)"
 
 
 @dataclass
@@ -85,79 +69,87 @@ async def save_key(settings: Settings, section: str, value: str) -> tuple[bool, 
     return True, msg
 
 
-@dataclass
-class ModelProblem:
-    field: str   # key | model | url | provider | limit | other — bagian mana yang perlu diperbaiki
-    hint: str
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9.]+", "-", text.lower()).strip("-")
 
 
-def explain_model_error(msg: str, preset_id: str = "") -> ModelProblem:
-    """Terjemahkan error mentah litellm jadi petunjuk + bagian yang harus diulang."""
-    m = msg.lower()
-    if "free tier can only be use" in m or "only be used from within" in m:
-        return ModelProblem("provider",
-            "Penyedia ini melarang tier gratisnya dipakai dari aplikasi lain. Pilih penyedia lain "
-            "(OpenRouter / Gemini / DeepSeek), atau model berbayar milik penyedia itu.")
-    if any(x in m for x in ("401", "unauthorized", "authentication", "invalid api key", "incorrect api key",
-                            "invalid x-api-key", "api_key client option", "api key not valid", "permission denied")):
-        return ModelProblem("key", "Key ditolak: salah, kedaluwarsa, atau belum diisi. Tempel ulang key-nya.")
-    if any(x in m for x in ("429", "rate limit", "rate_limit", "quota", "resource_exhausted", "insufficient")):
-        return ModelProblem("limit",
-            "Key valid, tapi kena limit / saldo habis. Coba lagi nanti, atau pilih model lain.")
-    if any(x in m for x in ("is unavailable", "model_not_found", "does not exist", "not found", "404",
-                            "unknown model", "invalid model", "unsupported model", "llm provider not provided")):
-        extra = " Cek daftar nama model di <URL>/models." if preset_id == "custom" else ""
-        return ModelProblem("model",
-            "Servernya menjawab, tapi nama model itu tidak ada, jadi URL dan key kemungkinan benar. "
-            "Periksa ejaan nama model." + extra)
-    if any(x in m for x in ("connect", "getaddrinfo", "name or service", "timed out", "timeout", "ssl",
-                            "unreachable", "connection error", "refused")):
-        return ModelProblem("url", "Tak bisa menghubungi server. Periksa URL (harus diawali http/https) dan koneksi.")
-    if "tool" in m and ("not support" in m or "unsupported" in m):
-        return ModelProblem("model", "Model ini tidak mendukung tool calling, padahal agent membutuhkannya. Pilih model lain.")
-    return ModelProblem("other", "Penyebabnya tak dikenali. Lihat detail di bawah, atau pilih penyedia lain.")
+SHORT = {"openrouter": "or", "google": "gemini", "togetherai": "together", "fireworks-ai": "fireworks"}
 
 
-async def add_preset_model(
-    settings: Settings, preset: Preset, key: str = "", model: str = "",
-    api_base: str = "", make_default: bool = True,
+def model_name(settings: Settings, provider_id: str, model_id: str) -> str:
+    """Nama pendek unik untuk daftar model: or-gemma-4-31b-it, deepseek-flash, …"""
+    base = _slug(model_id.split("/")[-1].removesuffix(":free"))
+    prefix = SHORT.get(provider_id, provider_id)
+    # "deepseek" + "deepseek-flash" → "deepseek-flash", bukan "deepseek-deepseek-flash".
+    name = (base if base.startswith(prefix) else f"{prefix}-{base}")[:32].rstrip("-")
+    existing = settings.get("models.list") or {}
+    final, n = name, 2
+    while final in existing:
+        final, n = f"{name}-{n}", n + 1
+    return final
+
+
+async def add_model_spec(
+    settings: Settings, name: str, spec: dict, key_env: str = "", key: str = "",
+    make_default: bool = True,
 ) -> tuple[bool, str]:
-    """Tes model, lalu simpan. key kosong = pakai yang tersimpan.
-    Key baru HANYA disimpan kalau tesnya lolos, supaya key salah tak tertinggal."""
+    """Tes model SUNGGUHAN, baru simpan. Key baru hanya disimpan kalau tes lolos (key salah
+    tak boleh tertinggal). key kosong = pakai yang sudah tersimpan. spec["api_key"] boleh
+    berupa "${ENV}" (disimpan seperti itu, dites dengan nilai aslinya)."""
     key = key.strip()
-    name = preset.id
-    spec: dict = {"model": model or preset.model}
-    env_name = preset.key
-    if preset.id == "openrouter":
-        spec["model"] = "openrouter/" + model.removeprefix("openrouter/")
-        name = "or-" + model.split("/")[-1].removesuffix(":free")[:24]
-    if preset.id == "custom":
-        name = "custom-" + model.split("/")[-1][:24]
-        spec = {"model": "openai/" + model.removeprefix("openai/"), "api_base": api_base}
-        if key:
-            env_name = "CUSTOM_" + "".join(c if c.isalnum() else "_" for c in name.upper())
-            spec["api_key"] = "${" + env_name + "}"
-        else:
-            spec["api_key"] = "none"  # server lokal (Ollama dll) tanpa key; litellm tetap butuh nilai
-    if preset.vision:
-        spec["vision"] = True
+    shown = key or (settings.key(key_env) if key_env else "")
     test = dict(spec)
-    if preset.id == "custom":
-        test["api_key"] = key or "none"
-
-    prev = os.environ.get(preset.key) if preset.key else None
-    if preset.key and key:
-        os.environ[preset.key] = key  # litellm membaca key preset dari env
+    if "api_key" in spec:
+        if spec["api_key"].startswith("${"):
+            if not shown:
+                return False, f"key {key_env} belum diisi (401 api key kosong)"
+            test["api_key"] = shown
+    elif key_env:
+        test["api_key"] = shown
     ok, msg = await checks.model(test)
     if not ok:
-        if preset.key and key:
-            os.environ.pop(preset.key, None) if prev is None else os.environ.__setitem__(preset.key, prev)
         return False, msg
-    if key and env_name:
-        settings.set_key(env_name, key)
+    if key and key_env:
+        settings.set_key(key_env, key)
     settings.add_model(name, spec, make_default)
     settings.skip("model", False)
     return True, f"{name} siap ({msg})"
+
+
+async def add_catalog_model(
+    settings: Settings, provider, model, key: str = "", make_default: bool = True,
+) -> tuple[bool, str]:
+    """Model dari katalog models.dev (lihat catalog.py)."""
+    res = resolve(provider, model)
+    if not res:
+        return False, f"penyedia {provider.name} belum didukung"
+    spec: dict = {"model": res.model, "api_key": "${" + res.key_env + "}" if res.key_required else "none"}
+    if res.api_base:
+        spec["api_base"] = res.api_base
+    if model.vision:
+        spec["vision"] = True
+    if model.context:
+        spec["context"] = model.context
+    if model.cost_in is not None and model.cost_out is not None:
+        spec["cost_in"], spec["cost_out"] = model.cost_in, model.cost_out
+    return await add_model_spec(
+        settings, model_name(settings, provider.id, model.id), spec,
+        res.key_env if res.key_required else "", key, make_default)
+
+
+async def add_custom_model(
+    settings: Settings, model: str, api_base: str, key: str = "", make_default: bool = True,
+) -> tuple[bool, str]:
+    """Endpoint OpenAI-compatible buatan sendiri (Ollama, LM Studio, vLLM, …)."""
+    name = "custom-" + _slug(model.split("/")[-1])[:24]
+    spec = {"model": "openai/" + model.removeprefix("openai/"), "api_base": api_base}
+    key = key.strip()
+    if key:
+        env = "CUSTOM_" + re.sub(r"[^A-Z0-9]", "_", name.upper())
+        spec["api_key"] = "${" + env + "}"
+        return await add_model_spec(settings, name, spec, env, key, make_default)
+    spec["api_key"] = "none"  # server lokal tanpa key; litellm tetap butuh nilai
+    return await add_model_spec(settings, name, spec, "", "", make_default)
 
 
 @dataclass

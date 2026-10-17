@@ -77,7 +77,7 @@ def build(settings: "Settings | None" = None) -> App:
 
     store = Store(cfg.data_dir / "inspire.db")
     memory = Memory(cfg.data_dir, cfg.memory_chars, cfg.user_chars)
-    llm = LLM(cfg.models, cfg.default_model, cfg.fallback, cfg.request_timeout)
+    llm = LLM(cfg.models, cfg.default_model, cfg.fallback, cfg.request_timeout, cfg.chain_timeout)
     media = Media(cfg.media)
     skills = Skills(cfg.data_dir / "skills")
 

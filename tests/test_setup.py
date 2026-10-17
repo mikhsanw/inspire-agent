@@ -91,41 +91,6 @@ async def test_save_key_tests_before_saving(tmp_path, monkeypatch):
     assert ok and s.key("GROQ_API_KEY") == "good" and not s.is_skipped("suara")
 
 
-async def test_add_preset_models(tmp_path, monkeypatch):
-    s = Settings(tmp_path)
-    tested = []
-
-    async def fake_model(spec):
-        tested.append(spec)
-        return True, "OK"
-
-    monkeypatch.setattr(S.checks, "model", fake_model)
-    pre = {p.id: p for p in S.PRESETS}
-    await S.add_preset_model(s, pre["openrouter"], key="or-k", model="meta/llama:free")
-    await S.add_preset_model(s, pre["gemini"], key="g-k", make_default=False)
-    await S.add_preset_model(s, pre["custom"], key="zen-k", model="big-pickle",
-                             api_base="https://opencode.ai/zen/v1", make_default=False)
-    cfg = from_settings(s)
-    assert cfg.default_model == "or-llama"
-    assert cfg.models["or-llama"].model == "openrouter/meta/llama:free"
-    assert cfg.models["gemini"].vision is True
-    assert cfg.models["custom-big-pickle"].api_key == "zen-k"   # ${CUSTOM_…} terisi
-    assert cfg.fallback == ["or-llama", "gemini", "custom-big-pickle"]
-    assert tested[2]["api_key"] == "zen-k"                      # dites dengan key asli
-    assert "zen-k" not in json.dumps(s.data["config"])          # key tak bocor ke config
-
-
-async def test_model_test_failure_not_saved(tmp_path, monkeypatch):
-    s = Settings(tmp_path)
-
-    async def fail(spec):
-        return False, "401"
-
-    monkeypatch.setattr(S.checks, "model", fail)
-    ok, msg = await S.add_preset_model(s, S.PRESETS[2], key="x")
-    assert not ok and msg == "401" and not s.get("models.list")
-
-
 async def test_status_states(tmp_path):
     s = Settings(tmp_path)
     f = {x.id: x for x in await S.status(s)}
@@ -294,106 +259,15 @@ async def test_tg_setup_zona_and_restart(tmp_path):
     ("litellm.APIConnectionError: Connection error. getaddrinfo failed", "url"),
     ("RateLimitError: 429 Too Many Requests", "limit"),
     ("Error: sesuatu yang aneh", "other"),
+    # pesan asli penyedia yang ditemukan lewat uji ke server sungguhan
+    ("CerebrasException - Wrong API Key", "key"),
+    ("DeepinfraException - User is not authorized to access this resource", "key"),
+    ("DeepseekException - Authentication Fails, Your api key: ****alah is invalid", "key"),
+    ("This model's maximum context length is 8192 tokens", "context"),
+    ("503 Service Unavailable", "server"),
 ])
 def test_explain_model_error(raw, field):
     p = S.explain_model_error(raw, "custom")
     assert p.field == field and p.hint
     if field == "model":
         assert "/models" in p.hint and "URL dan key kemungkinan benar" in p.hint
-
-
-async def test_failed_key_not_persisted_and_env_restored(tmp_path, monkeypatch):
-    s = Settings(tmp_path)
-
-    async def fail(spec):
-        assert os.environ["DEEPSEEK_API_KEY"] == "sk-salah"   # litellm harus melihat key yang sedang dites
-        return False, "401"
-
-    monkeypatch.setattr(S.checks, "model", fail)
-    ok, _ = await S.add_preset_model(s, S.PRESETS[2], key="sk-salah")
-    assert not ok and not s.key("DEEPSEEK_API_KEY") and "DEEPSEEK_API_KEY" not in os.environ
-
-    s.set_key("DEEPSEEK_API_KEY", "sk-lama")                 # key lama tak boleh hilang karena tes gagal
-    ok, _ = await S.add_preset_model(s, S.PRESETS[2], key="sk-salah")
-    assert not ok and os.environ["DEEPSEEK_API_KEY"] == "sk-lama" and s.key("DEEPSEEK_API_KEY") == "sk-lama"
-
-
-async def test_custom_without_key_uses_placeholder(tmp_path, monkeypatch):
-    s = Settings(tmp_path)
-    tested = []
-
-    async def fake(spec):
-        tested.append(spec)
-        return True, "OK"
-
-    monkeypatch.setattr(S.checks, "model", fake)
-    ok, _ = await S.add_preset_model(s, S.PRESETS[3], model="qwen2.5:7b", api_base="http://localhost:11434/v1")
-    assert ok and tested[0]["api_key"] == "none"
-    assert from_settings(s).models["custom-qwen2.5:7b"].api_key == "none"   # tanpa ini litellm error di runtime
-
-
-def test_wizard_retries_only_the_wrong_part(tmp_path, monkeypatch):
-    from inspire.setup import wizard
-
-    s = Settings(tmp_path)
-    asked = []
-    answers = {
-        "URL API (OpenAI-compatible), mis. https://api.contoh.com/v1": ["https://zen.example/v1"],
-        "Nama model": ["opencode"],
-        "Nama model yang benar": ["deepseek-v4"],
-    }
-
-    def fake_ask(prompt, default=""):
-        asked.append(prompt)
-        return answers[prompt].pop(0)
-
-    seen = []
-
-    async def fake_model(spec):
-        seen.append(spec["model"])
-        if spec["model"] == "openai/opencode":
-            return False, "BadRequestError: OpenAIException - Upstream request failed: Model is unavailable."
-        return True, "OK"
-
-    monkeypatch.setattr(wizard, "ask", fake_ask)
-    monkeypatch.setattr(wizard, "ask_secret", lambda prompt: "")
-    monkeypatch.setattr(S.checks, "model", fake_model)
-    assert wizard._setup_one(s, S.PRESETS[3]) is True
-    assert seen == ["openai/opencode", "openai/deepseek-v4"]
-    # URL dan key TIDAK ditanya lagi, hanya nama model
-    assert asked.count("Nama model yang benar") == 1
-    assert asked.count("URL API (OpenAI-compatible), mis. https://api.contoh.com/v1") == 1
-    assert s.get("models.list")["custom-deepseek-v4"]["api_base"] == "https://zen.example/v1"
-
-
-def test_wizard_provider_error_goes_back_to_list(tmp_path, monkeypatch):
-    from inspire.setup import wizard
-
-    s = Settings(tmp_path)
-    prompts = []
-    monkeypatch.setattr(wizard, "ask", lambda p, d="": prompts.append(p) or {"Nama model": "x"}.get(p, "https://z/v1"))
-    monkeypatch.setattr(wizard, "ask_secret", lambda p: "")
-
-    async def fail(spec):
-        return False, "OpenAIException - OpenCode's free tier can only be used from within OpenCode."
-
-    monkeypatch.setattr(S.checks, "model", fail)
-    assert wizard._setup_one(s, S.PRESETS[3]) is False          # tak ada gunanya mengulang: ganti penyedia
-    assert prompts.count("Nama model") == 1 and not s.get("models.list")
-
-
-async def test_openrouter_list_shows_all_free_tool_models(monkeypatch):
-    models = [{"id": f"vendor/m{i}:free", "context_length": 1000 * i, "supported_parameters": ["tools"]} for i in range(1, 16)]
-    models += [
-        {"id": "vendor/notools:free", "context_length": 9_000_000, "supported_parameters": ["temperature"]},
-        {"id": "vendor/paid", "context_length": 9_000_000, "supported_parameters": ["tools"]},
-    ]
-
-    async def fake_get(url, **kw):
-        return SimpleNamespace(json=lambda: {"data": models})
-
-    monkeypatch.setattr(S.checks, "_get", fake_get)
-    listing = await S.checks.openrouter_free_list()
-    assert len(listing) == 15                                  # semua, bukan 6 teratas
-    assert listing[0] == ("vendor/m15:free", 15000) and listing[-1][0] == "vendor/m1:free"
-    assert "vendor/notools:free" not in dict(listing) and "vendor/paid" not in dict(listing)

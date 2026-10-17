@@ -14,33 +14,22 @@ discord:
   allowed_user_ids: ${DISCORD_USER_IDS}   # user ID Discord kamu (Developer Mode → Copy User ID)
   command_prefix: "!"                     # !new, !model, !skills, …
 
+# Model dikelola lewat `inspire setup model` atau /setup (katalog models.dev). Blok ini hanya untuk
+# penyetelan lanjutan; yang ditulis di sini menimpa data/settings.json, per nama model.
 models:
-  default: deepseek
-  # Urutan cadangan kalau model aktif error/limit.
-  fallback: [deepseek, or-free, zen]
-  list:
-    deepseek:
-      model: deepseek/deepseek-chat       # baca DEEPSEEK_API_KEY dari env
-      # vision: false → gambar diubah jadi deskripsi dulu oleh media.vision_models
-    or-free:
-      # Nama model :free di OpenRouter sering berubah — cek openrouter.ai/models?q=free
-      # Pilih yang support "tools".
-      model: openrouter/deepseek/deepseek-chat-v3-0324:free
-      api_key: ${OPENROUTER_API_KEY}
-    zen:
-      # OpenCode Zen = endpoint OpenAI-compatible. Ganti nama model sesuai daftar free
-      # di dashboard OpenCode Zen.
-      model: openai/<nama-model-free>
-      api_base: https://opencode.ai/zen/v1
-      api_key: ${OPENCODE_API_KEY}
-    # Model yang bisa lihat gambar: set vision: true → gambar dikirim langsung.
-    # gemini:
-    #   model: gemini/gemini-2.5-flash    # GEMINI_API_KEY
-    #   vision: true
-    # Contoh lain:
-    # local:
-    #   model: ollama_chat/qwen2.5:7b
-    #   api_base: http://host.docker.internal:11434
+  # default: deepseek-flash          # model utama
+  # fallback: [deepseek-flash, or-gemma-4-31b-it]   # urutan cadangan
+  list: {}
+  #   deepseek-flash:                # contoh: ubah batas waktu satu model
+  #     model: deepseek/deepseek-flash
+  #     api_key: ${DEEPSEEK_API_KEY}   # key disimpan lewat setup, bukan di sini
+  #     timeout: 120                 # detik; bawaan = agent.request_timeout
+  #     context: 1000000             # token; dipakai untuk anggaran konteks
+  #     vision: true                 # true → gambar dikirim langsung ke model ini
+  #   lokal:                         # contoh: server sendiri tanpa key
+  #     model: openai/qwen2.5:7b
+  #     api_base: http://host.docker.internal:11434/v1
+  #     api_key: none
 
 memory:
   memory_chars: 2200   # batas MEMORY.md
@@ -54,7 +43,8 @@ context:
 
 agent:
   max_iterations: 12
-  request_timeout: 120
+  request_timeout: 75         # satu panggilan model; per model: models.list.<nama>.timeout
+  chain_timeout: 150          # batas total seluruh rantai fallback
   task_max_iterations: 60     # mode tugas (/tugas)
   task_max_minutes: 30
   task_progress_seconds: 45

@@ -208,7 +208,7 @@ Telegram pakai `/`, Discord pakai `!`.
 | `/setup` | Atur fitur (Telegram) |
 | `/status` | Fitur mana yang aktif |
 | `/new` | Mulai sesi baru (riwayat lama tetap bisa dicari) |
-| `/model` | Lihat model; `/model <nama>` untuk ganti model aktif |
+| `/model` | Lihat model + status (✅ ⏳ ⛔); `/model <nama>` ganti; `/model reset` hapus catatan error |
 | `/memory` | Isi memori |
 | `/jobs` | Jadwal aktif |
 | `/skills` | Daftar skill + riwayat perubahan |
@@ -236,24 +236,59 @@ inspire run                 jalan di depan (dev)
 
 ## Model AI
 
-Pilihan di setup (urutan = urutan saran):
+Model dipilih dari **katalog [models.dev](https://models.dev)**, sumber yang sama dengan OpenCode:
+±230 penyedia dan ribuan model yang mendukung tool calling, lengkap dengan ukuran konteks dan harga.
+Nama model selalu valid, tanpa preset buatan tangan yang bisa basi. Katalog di-cache 24 jam di
+`data/catalog.json` dan tetap terpakai walau offline.
 
-| Pilihan | Model | Biaya | Catatan |
-|---|---|---|---|
-| **OpenRouter** | daftar model `:free` yang mendukung tool, diambil otomatis | gratis | Perlu akun, tanpa kartu. Ada limit harian |
-| **Gemini Flash** | `gemini/gemini-2.5-flash` | gratis (free tier) | Bisa melihat gambar |
-| **DeepSeek** | `deepseek/deepseek-chat` | sangat murah | Tool calling stabil. Top-up ~$2 tahan lama |
-| **Lainnya** | endpoint OpenAI-compatible | tergantung | OpenCode Zen, Ollama, LM Studio, vLLM, dll |
+**Memilih** (`inspire setup model`, atau `/setup` → Model AI di Telegram):
 
-- Bisa menambah beberapa model. Model pertama = utama, sisanya **cadangan otomatis**
-  saat error atau kena limit (penting untuk model gratis).
-- Ganti model aktif tanpa restart: `/model <nama>`.
-- Model wajib mendukung **tool calling**. Tanpa itu agent tak bisa menyimpan memori,
-  membuat jadwal, dll.
-- Model tanpa vision tetap bisa "melihat" gambar lewat deskripsi Gemini (bagian `gambar`).
+1. **Penyedia**: 12 yang populer (OpenRouter, DeepSeek, Google, Groq, Cerebras, Mistral, NVIDIA, OpenAI,
+   Anthropic, xAI, Together, Fireworks), atau ketik nama untuk mencari penyedia lain,
+   atau **Endpoint sendiri** (Ollama, LM Studio, vLLM, server OpenAI-compatible).
+2. **Key**: ditempel, **dites dulu**, baru disimpan. Key yang sudah ada dipakai ulang (Groq yang sama
+   dengan fitur suara, Gemini yang sama dengan fitur gambar).
+3. **Model**: daftar dengan konteks dan harga (`$ per 1 juta token, input/output`), 👁 = bisa melihat gambar.
 
-Contoh "Lainnya" di `/setup`: `https://opencode.ai/zen/v1 nama-model sk-xxx`, atau
-`http://host.docker.internal:11434/v1 qwen2.5:7b` untuk Ollama di host.
+| Di wizard terminal | Di Telegram |
+|---|---|
+| nomor = pilih · kata = cari · `g` = hanya $0 · `h`/`t`/`k` = urut harga / terbaru / konteks · `m` = halaman berikut | tombol angka, 🆓 $0, ↕ urutan, ⬅➡ halaman · ketik kata untuk mencari |
+
+Kalau tes gagal, penyebabnya dijelaskan dan **hanya bagian yang salah** yang ditanya ulang (key salah →
+tempel ulang key; nama model salah → daftar terbuka lagi).
+
+**Soal "gratis".** Katalog tidak bisa menandai free tier (Gemini dan Groq tercatat berharga normal),
+sedangkan `$0` sering berarti langganan atau terkunci. Penyedia langganan dan tier gratis OpenCode
+(hanya berlaku di dalam aplikasi OpenCode) disembunyikan. `$0` ditampilkan apa adanya; syarat, batas,
+dan kebijakan data tiap model gratis ditentukan penyedianya. **Untuk data sensitif, jangan pakai model gratis.**
+Gambaran biaya: agent pribadi dengan model murah kelas DeepSeek Flash ($0,15/$0,6 per juta token)
+biasanya kurang dari $1 per bulan.
+
+### Fallback yang tahan banting
+
+Bisa menambah beberapa model; yang pertama = utama, sisanya cadangan. Model yang gagal tidak dicoba
+terus-menerus:
+
+| Jenis error | Yang terjadi |
+|---|---|
+| Kena limit / saldo (429) | **Istirahat** 60 → 120 → 240 dtk… (maks 15 menit), atau sesuai saran server ("retry in 28s") |
+| Server penyedia bermasalah / tak terjangkau / terlalu lambat | Istirahat 30 → 60 → … dtk (maks 5 menit) |
+| Key ditolak, nama model tak ada, diblokir penyedia, tak mendukung tool | **⛔ Perlu dibereskan**: dilewati 30 menit, atau sampai setelannya diubah (mis. key baru dari `/setup`) |
+| Melewati batas konteks | Bukan salah modelnya: tak diistirahatkan, langsung coba model berikut |
+
+- **Batas waktu**: tiap panggilan 75 dtk (`agent.request_timeout`, atau `timeout` per model), dan seluruh rantai
+  maksimal 150 dtk (`agent.chain_timeout`). Tiga model yang macet tak lagi membuat bot diam berminggu-menit.
+- Kalau semua sedang istirahat, bot tetap mencoba yang paling cepat pulih, tidak langsung menyerah.
+- Kalau model cadangan yang menjawab, balasan diberi catatan `↪ dijawab oleh <model>`.
+- `/model` menampilkan semua model dengan status: ✅ · ⏳ istirahat (sisa waktu, penyebab) · ⛔ perlu dibereskan.
+  `/model <nama>` ganti model aktif, `/model reset` hapus catatan error.
+- Anggaran konteks mengikuti model aktif: maksimal 70% dari konteksnya (model kecil tak dijejali 48k token).
+- `inspire doctor` menguji **semua** model yang terdaftar.
+
+Model wajib mendukung **tool calling** (katalog sudah menyaringnya). Model tanpa vision tetap bisa
+"melihat" gambar lewat deskripsi Gemini (bagian `gambar`).
+
+Contoh endpoint sendiri di `/setup`: `http://host.docker.internal:11434/v1 qwen2.5:7b` (Ollama di host, tanpa key).
 
 ## Memori, sesi, dan skill
 
@@ -490,7 +525,8 @@ Untuk setelan yang tidak ada di wizard, buat `data/config.yaml`. Isinya menimpa
 | `context.keep_last` | 12 | Pesan terakhir yang tidak diringkas |
 | `context.idle_hours` | 6 | Diam lebih lama dari ini → sesi baru |
 | `agent.max_iterations` | 12 | Batas langkah tool per pesan |
-| `agent.request_timeout` | 120 | Timeout panggilan model (detik) |
+| `agent.request_timeout` | 75 | Timeout satu panggilan model (detik); per model bisa diganti dengan `timeout` |
+| `agent.chain_timeout` | 150 | Batas total seluruh rantai fallback (detik) |
 | `agent.task_max_iterations` / `task_max_minutes` | 60 / 30 | Batas satu tugas |
 | `agent.task_progress_seconds` | 45 | Jarak minimal antar kabar kemajuan |
 | `shell.enabled` / `timeout` / `confirm_timeout` | true / 60 / 300 | Shell |
@@ -510,7 +546,8 @@ Rujuk key dengan `${NAMA_KEY}`. Jangan menulis key langsung di `config.yaml`.
 |---|---|
 | Bot tak menjawab sama sekali | `inspire status` lalu `inspire logs`. Belum di-pair? `inspire pair` |
 | "Belum ada model" | `/setup` → Model AI, atau `inspire setup model` |
-| "Semua model gagal dihubungi" | Kena limit model gratis. Tambah model cadangan, atau `inspire doctor` untuk tes key |
+| "Semua model gagal dihubungi" | Pesan itu merinci tiap model (limit, key ditolak, …). `/model` untuk status, `inspire doctor` untuk tes semua key, lalu tambah model cadangan di penyedia lain |
+| Model ditandai ⛔ | Key atau nama model salah. Perbaiki lewat `/setup` → Model AI; setelah diubah, catatan error otomatis hilang |
 | Pairing di wizard "bot sedang jalan di tempat lain" | Bot sudah jalan. Kirim `/pair <kode>` langsung ke bot |
 | YouTube "minta login / bukan bot" | IP server diblokir YouTube. `/setup` → YouTube → kirim `cookies.txt` (pakai akun cadangan) |
 | Web search "tidak ada hasil" | DuckDuckGo diblokir sebagian ISP Indonesia; Bing/Yahoo dicoba otomatis. Di VPS luar biasanya normal |
@@ -561,7 +598,9 @@ src/inspire/
   settings.py        data/settings.json (+ migrasi .env/config.yaml lama)
   config.py          pohon setelan → Config, ${ENV}
   agent.py           loop agent, sesi, ringkas konteks, gambar
-  llm.py             litellm + fallback
+  llm.py             litellm + fallback (cooldown, blokir, batas waktu)
+  llm_errors.py      klasifikasi error model (key / limit / nama model / …)
+  catalog.py         katalog models.dev: cari, urut, petakan ke litellm
   memory.py          MEMORY.md / USER.md
   store.py           SQLite: sesi, pesan (FTS5), jobs
   scheduler.py       APScheduler

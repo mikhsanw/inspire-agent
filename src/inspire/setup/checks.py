@@ -74,23 +74,3 @@ async def model(spec: dict) -> tuple[bool, str]:
         msg = str(e).split("\n")[0][:200]
         return False, f"{type(e).__name__}: {msg}"
     return True, f"model menjawab: {(resp.choices[0].message.content or '').strip()[:30]!r}"
-
-
-async def openrouter_free_list() -> list[tuple[str, int]]:
-    """Semua model :free di OpenRouter yang mendukung tool calling → [(id, konteks)].
-    Urut konteks terbesar dulu, lalu nama. Daftarnya pendek (belasan) dan sering berubah,
-    jadi tampilkan semuanya; OpenRouter tidak punya penanda kualitas yang bisa diurutkan."""
-    try:
-        r = await _get("https://openrouter.ai/api/v1/models")
-        data = r.json()["data"]
-    except Exception:
-        return []
-    free = [
-        (m["id"], m.get("context_length") or 0) for m in data
-        if m["id"].endswith(":free") and "tools" in (m.get("supported_parameters") or [])
-    ]
-    return sorted(free, key=lambda x: (-x[1], x[0]))
-
-
-async def openrouter_free_models() -> list[str]:
-    return [m for m, _ in await openrouter_free_list()]

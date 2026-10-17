@@ -23,6 +23,12 @@ class FakeLLM:
     def set_active(self, name):
         return name in self.models
 
+    def status(self, name):
+        return "ok", ""
+
+    def reset(self, name=None):
+        pass
+
     async def complete(self, messages, tools=None):
         self.seen.append(messages)
         if tools is None:  # panggilan ringkas

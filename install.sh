@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Installer inspire.
-#   curl -fsSL https://raw.githubusercontent.com/GANTI_USER/inspire/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install.sh | bash
 #
 # Variabel opsional: INSPIRE_REPO (URL git), INSPIRE_DIR (folder, bawaan ~/inspire),
 # INSPIRE_MODE=docker|native (lewati deteksi).
 set -euo pipefail
 
-REPO="${INSPIRE_REPO:-https://github.com/GANTI_USER/inspire.git}"
+REPO="${INSPIRE_REPO:-https://github.com/mikhsanw/inspire-agent.git}"
 DIR="${INSPIRE_DIR:-$HOME/inspire}"
 OS="$(uname -s)"
 TTY=/dev/tty

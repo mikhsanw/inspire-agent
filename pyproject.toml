@@ -1,0 +1,30 @@
+[project]
+name = "inspire"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Muhammad Ikhsan Wibowo", email = "ikhsan.flip@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "litellm>=1.105.1",
+    "python-dotenv>=1.2.4",
+    "python-telegram-bot>=21",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+inspire = "inspire:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

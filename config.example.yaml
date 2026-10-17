@@ -1,0 +1,43 @@
+# Salin jadi config.yaml. Rahasia taruh di .env, rujuk dengan ${NAMA}.
+data_dir: data
+
+telegram:
+  token: ${TELEGRAM_BOT_TOKEN}
+  allowed_user_ids: ${ALLOWED_USER_IDS}   # "12345" atau "12345,67890"
+
+models:
+  default: deepseek
+  # Urutan cadangan kalau model aktif error/limit.
+  fallback: [deepseek, or-free, zen]
+  list:
+    deepseek:
+      model: deepseek/deepseek-chat       # baca DEEPSEEK_API_KEY dari env
+    or-free:
+      # Nama model :free di OpenRouter sering berubah — cek openrouter.ai/models?q=free
+      # Pilih yang support "tools".
+      model: openrouter/deepseek/deepseek-chat-v3-0324:free
+      api_key: ${OPENROUTER_API_KEY}
+    zen:
+      # OpenCode Zen = endpoint OpenAI-compatible. Ganti nama model sesuai daftar free
+      # di dashboard OpenCode Zen.
+      model: openai/<nama-model-free>
+      api_base: https://opencode.ai/zen/v1
+      api_key: ${OPENCODE_API_KEY}
+    # Contoh lain:
+    # local:
+    #   model: ollama_chat/qwen2.5:7b
+    #   api_base: http://host.docker.internal:11434
+
+memory:
+  memory_chars: 2200   # batas MEMORY.md
+  user_chars: 1400     # batas USER.md
+
+context:
+  max_tokens: 48000    # anggaran konteks
+  compress_at: 0.75    # ringkas saat estimasi > 75% anggaran
+  keep_last: 12        # pesan terakhir yang tak diringkas
+  idle_hours: 6        # diam lebih lama → sesi baru
+
+agent:
+  max_iterations: 12
+  request_timeout: 120

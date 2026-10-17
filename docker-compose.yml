@@ -8,3 +8,22 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
       - ./data:/app/data
+    depends_on: [sandbox]
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    restart: unless-stopped
+    # Hanya token yang masuk, bukan seluruh .env.
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN}
+    volumes:
+      - ./workspace:/workspace
+    # Port TIDAK dibuka ke host; hanya bisa diakses service inspire.
+    expose: ["8765"]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]

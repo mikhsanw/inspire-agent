@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at  REAL NOT NULL,
     last_at     REAL NOT NULL,
     summary     TEXT,              -- ringkasan pesan sebelum context_from
-    context_from INTEGER DEFAULT 0 -- id pesan pertama yang masih masuk konteks
+    context_from INTEGER DEFAULT 0, -- id pesan pertama yang masih masuk konteks
+    kind        TEXT DEFAULT 'chat'  -- 'chat' atau 'job'
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_chat ON sessions(chat_id, id);
 
@@ -35,6 +36,20 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content, content='messages', content_rowid='id', tokenize='unicode61'
 );
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY,
+    chat_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    prompt      TEXT NOT NULL,
+    kind        TEXT NOT NULL,      -- 'cron' atau 'once'
+    spec        TEXT NOT NULL,      -- ekspresi cron 5 kolom, atau ISO datetime
+    allow_shell INTEGER DEFAULT 0,  -- 1 = shell boleh tanpa konfirmasi
+    enabled     INTEGER DEFAULT 1,
+    created_at  REAL NOT NULL,
+    last_run_at REAL,
+    last_result TEXT
+);
+
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages
 WHEN new.role IN ('user', 'assistant') AND new.content IS NOT NULL BEGIN
     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
@@ -50,6 +65,22 @@ class Session:
     last_at: float
     summary: str | None
     context_from: int
+    kind: str = "chat"
+
+
+@dataclass
+class Job:
+    id: int
+    chat_id: str
+    name: str
+    prompt: str
+    kind: str
+    spec: str
+    allow_shell: int
+    enabled: int
+    created_at: float
+    last_run_at: float | None
+    last_result: str | None
 
 
 class Store:
@@ -58,25 +89,31 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        self._migrate()
         self.db.commit()
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(sessions)")}
+        if "kind" not in cols:  # DB dari fase 1
+            self.db.execute("ALTER TABLE sessions ADD COLUMN kind TEXT DEFAULT 'chat'")
 
     # --- sesi -----------------------------------------------------------
 
     def current_session(self, chat_id: str) -> Session | None:
         row = self.db.execute(
-            "SELECT * FROM sessions WHERE chat_id=? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM sessions WHERE chat_id=? AND kind='chat' ORDER BY id DESC LIMIT 1",
             (chat_id,),
         ).fetchone()
         return Session(**dict(row)) if row else None
 
-    def new_session(self, chat_id: str) -> Session:
+    def new_session(self, chat_id: str, kind: str = "chat") -> Session:
         now = time.time()
         cur = self.db.execute(
-            "INSERT INTO sessions(chat_id, started_at, last_at) VALUES (?,?,?)",
-            (chat_id, now, now),
+            "INSERT INTO sessions(chat_id, started_at, last_at, kind) VALUES (?,?,?,?)",
+            (chat_id, now, now, kind),
         )
         self.db.commit()
-        return Session(cur.lastrowid, chat_id, now, now, None, 0)
+        return Session(cur.lastrowid, chat_id, now, now, None, 0, kind)
 
     def touch(self, session_id: int) -> None:
         self.db.execute(
@@ -130,6 +167,43 @@ class Store:
             (_fts_query(query), chat_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # --- jobs -----------------------------------------------------------
+
+    def add_job(
+        self, chat_id: str, name: str, prompt: str, kind: str, spec: str, allow_shell: bool
+    ) -> Job:
+        cur = self.db.execute(
+            """INSERT INTO jobs(chat_id, name, prompt, kind, spec, allow_shell, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (chat_id, name, prompt, kind, spec, int(allow_shell), time.time()),
+        )
+        self.db.commit()
+        return self.get_job(cur.lastrowid)
+
+    def get_job(self, job_id: int) -> Job | None:
+        row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return Job(**dict(row)) if row else None
+
+    def jobs(self, chat_id: str | None = None, enabled_only: bool = True) -> list[Job]:
+        sql, args = "SELECT * FROM jobs WHERE 1=1", []
+        if chat_id is not None:
+            sql += " AND chat_id=?"
+            args.append(chat_id)
+        if enabled_only:
+            sql += " AND enabled=1"
+        return [Job(**dict(r)) for r in self.db.execute(sql + " ORDER BY id", args)]
+
+    def disable_job(self, job_id: int) -> None:
+        self.db.execute("UPDATE jobs SET enabled=0 WHERE id=?", (job_id,))
+        self.db.commit()
+
+    def job_ran(self, job_id: int, result: str) -> None:
+        self.db.execute(
+            "UPDATE jobs SET last_run_at=?, last_result=? WHERE id=?",
+            (time.time(), result[:2000], job_id),
+        )
+        self.db.commit()
 
 
 def _row_to_msg(r: sqlite3.Row) -> dict:

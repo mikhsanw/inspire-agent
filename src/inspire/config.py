@@ -47,6 +47,13 @@ class Config:
     idle_hours: float = 6
     max_iterations: int = 12
     request_timeout: float = 120
+    timezone: str = "Asia/Jakarta"
+    sandbox_url: str = ""         # kosong = tool shell mati
+    sandbox_token: str = ""
+    shell_timeout: int = 60
+    confirm_timeout: int = 300    # detik menunggu tombol ✅/❌
+    fetch_max_chars: int = 12000
+    search_backends: list[str] = field(default_factory=lambda: ["duckduckgo", "bing", "yahoo"])
 
 
 def load(path: Path | str) -> Config:
@@ -56,6 +63,8 @@ def load(path: Path | str) -> Config:
     mem = raw.get("memory", {})
     ctx = raw.get("context", {})
     agent = raw.get("agent", {})
+    shell = raw.get("shell", {})
+    web = raw.get("web", {})
 
     models = {name: ModelCfg(**spec) for name, spec in (m.get("list") or {}).items()}
     if not models:
@@ -84,4 +93,11 @@ def load(path: Path | str) -> Config:
         idle_hours=ctx.get("idle_hours", 6),
         max_iterations=agent.get("max_iterations", 12),
         request_timeout=agent.get("request_timeout", 120),
+        timezone=raw.get("timezone", "Asia/Jakarta"),
+        sandbox_url=shell.get("sandbox_url", ""),
+        sandbox_token=shell.get("token", ""),
+        shell_timeout=shell.get("timeout", 60),
+        confirm_timeout=shell.get("confirm_timeout", 300),
+        fetch_max_chars=web.get("fetch_max_chars", 12000),
+        search_backends=web.get("search_backends") or ["duckduckgo", "bing", "yahoo"],
     )

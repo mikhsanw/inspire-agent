@@ -26,7 +26,7 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
 
 ## Fase
 
-### Fase 1 — inti (dikerjakan sekarang)
+### Fase 1 — inti ✅
 - Loop agent: pesan → model → tool call → jalankan → ulang (batas iterasi).
 - `litellm` router: daftar model di config, fallback berurutan saat error/limit,
   perintah `/model` untuk ganti model aktif tanpa restart.
@@ -39,7 +39,7 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
   setelah diam `idle_hours`.
 - Docker + compose, volume `data/`.
 
-### Fase 2 — hidup
+### Fase 2 — hidup ✅
 - Tool `schedule` (buat / list / hapus job), tabel `jobs`, APScheduler.
   Job jalan = agent dijalankan dengan prompt job, hasil dikirim ke Telegram.
 - `web_search` (`ddgs`) + `fetch_url` (ambil teks halaman).

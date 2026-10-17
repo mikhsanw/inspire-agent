@@ -1,5 +1,6 @@
 # Salin jadi config.yaml. Rahasia taruh di .env, rujuk dengan ${NAMA}.
 data_dir: data
+timezone: Asia/Jakarta
 
 telegram:
   token: ${TELEGRAM_BOT_TOKEN}
@@ -41,3 +42,14 @@ context:
 agent:
   max_iterations: 12
   request_timeout: 120
+
+web:
+  fetch_max_chars: 12000
+  # Dicoba berurutan. DuckDuckGo diblokir sebagian ISP Indonesia; di VPS luar biasanya jalan.
+  search_backends: [duckduckgo, bing, yahoo]
+
+shell:
+  sandbox_url: http://sandbox:8765   # kosongkan untuk mematikan tool shell
+  token: ${SANDBOX_TOKEN}
+  timeout: 60
+  confirm_timeout: 300               # detik menunggu tombol ✅/❌, lalu batal

@@ -1,0 +1,16 @@
+# Sandbox shell: terpisah dari agent, tanpa akses .env / data agent.
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash curl ca-certificates git jq procps tree file less unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 agent \
+    && mkdir -p /workspace && chown agent:agent /workspace
+
+COPY src/inspire/sandbox_server.py /opt/sandbox_server.py
+
+USER agent
+ENV WORKSPACE=/workspace HOME=/home/agent PYTHONUNBUFFERED=1
+WORKDIR /workspace
+EXPOSE 8765
+CMD ["python", "/opt/sandbox_server.py"]

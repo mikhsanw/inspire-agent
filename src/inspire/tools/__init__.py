@@ -11,12 +11,18 @@ from typing import Any, Awaitable, Callable
 log = logging.getLogger(__name__)
 
 
+Confirm = Callable[[str], Awaitable[bool]]
+
+
 @dataclass
 class ToolContext:
     """Info per-panggilan yang tool butuhkan (chat mana, sesi mana)."""
 
     chat_id: str
     session_id: int
+    confirm: Confirm | None = None     # tanya user (tombol ✅/❌); None = tak bisa tanya
+    auto_approve_shell: bool = False   # job yang ditandai "boleh tanpa tanya"
+    is_job: bool = False
 
 
 @dataclass
@@ -44,8 +50,8 @@ class Registry:
     def add(self, tool: Tool) -> None:
         self.tools[tool.name] = tool
 
-    def schemas(self) -> list[dict]:
-        return [t.schema() for t in self.tools.values()]
+    def schemas(self, exclude: set[str] = frozenset()) -> list[dict]:
+        return [t.schema() for t in self.tools.values() if t.name not in exclude]
 
     async def call(self, name: str, raw_args: str | dict | None, ctx: ToolContext) -> str:
         tool = self.tools.get(name)

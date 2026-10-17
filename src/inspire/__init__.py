@@ -15,8 +15,12 @@ def build(config_path: str | Path):
     from .llm import LLM
     from .memory import Memory
     from .store import Store
+    from .scheduler import Scheduler
     from .tools import Registry
     from .tools.core import register_core
+    from .tools.schedule import register_schedule
+    from .tools.shell import register_shell
+    from .tools.web import register_web
 
     load_dotenv()
     cfg = config_mod.load(config_path)
@@ -27,7 +31,15 @@ def build(config_path: str | Path):
     llm = LLM(cfg.models, cfg.default_model, cfg.fallback, cfg.request_timeout)
     tools = Registry()
     register_core(tools, memory, store)
-    return cfg, Agent(cfg, store, memory, llm, tools)
+    register_web(tools, cfg.fetch_max_chars, cfg.search_backends)
+    if cfg.sandbox_url:
+        register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout)
+    else:
+        logging.getLogger(__name__).warning("shell.sandbox_url kosong → tool shell mati")
+    agent = Agent(cfg, store, memory, llm, tools)
+    scheduler = Scheduler(store, agent)
+    register_schedule(tools, store, scheduler)
+    return cfg, agent, scheduler
 
 
 def main() -> None:
@@ -39,5 +51,8 @@ def main() -> None:
 
     from .gateway.telegram import TelegramGateway
 
-    cfg, agent = build(os.environ.get("INSPIRE_CONFIG", "config.yaml"))
-    TelegramGateway(cfg.telegram_token, cfg.allowed_user_ids, agent).run()
+    cfg, agent, scheduler = build(os.environ.get("INSPIRE_CONFIG", "config.yaml"))
+    gw = TelegramGateway(cfg.telegram_token, cfg.allowed_user_ids, agent, cfg.confirm_timeout)
+    scheduler.attach(gw.send, gw.confirm_for)
+    gw.on_start(scheduler.start)
+    gw.run()

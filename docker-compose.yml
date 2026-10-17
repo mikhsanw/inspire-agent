@@ -10,6 +10,8 @@ services:
       INSPIRE_MODE: docker
       INSPIRE_INBOX: /app/inbox
       SANDBOX_URL: http://sandbox:8765
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # SSH ke server ini (fitur web)
     volumes:
       - ./data:/app/data
       - ./workspace/inbox:/app/inbox   # file kiriman user → terlihat di sandbox

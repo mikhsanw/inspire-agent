@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 import uuid
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -23,9 +24,16 @@ from .base import Gateway, command, document_text, split_text, voice_text
 from .tg_setup import TelegramSetup
 
 log = logging.getLogger(__name__)
+
+
+def _hhmm(ts: float) -> str:
+    return time.strftime("%H:%M", time.localtime(ts))
+
+
 MAX_LEN = 4000  # batas Telegram 4096
 MAX_DOWNLOAD = 20 * 1024 * 1024  # batas unduh Bot API
-COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status"]
+COMMANDS = ["start", "help", "new", "model", "memory", "jobs", "skills", "skillundo", "status",
+            "caveman", "kunci"]
 
 
 class TelegramGateway(Gateway):
@@ -55,7 +63,7 @@ class TelegramGateway(Gateway):
         add = self.tg.add_handler
         add(CommandHandler(COMMANDS, self._command, filters=owner))
         add(CommandHandler("setup", self._setup, filters=owner))
-        add(CallbackQueryHandler(self._button, pattern=r"^(ok|no):"))
+        add(CallbackQueryHandler(self._button, pattern=r"^(ok|no|gr):"))
         add(CallbackQueryHandler(self._setup_button, pattern=r"^su:"))
         add(MessageHandler(owner & filters.TEXT & ~filters.COMMAND, self._text))
         add(MessageHandler(owner & (filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE), self._voice))
@@ -85,16 +93,20 @@ class TelegramGateway(Gateway):
         for chunk in split_text(text, MAX_LEN):
             await self.tg.bot.send_message(chat_id=int(chat_id), text=chunk)
 
-    async def confirm(self, chat_id: str, text: str) -> bool:
+    async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
+        await self.tg.bot.send_document(int(chat_id), InputFile(data, filename=name), caption=caption[:1000] or None)
+
+    async def confirm(self, chat_id: str, text: str, grant: bool = False) -> bool:
         key = uuid.uuid4().hex[:16]
         fut = asyncio.get_running_loop().create_future()
-        self._pending[key] = fut
-        kb = InlineKeyboardMarkup(
-            [[
-                InlineKeyboardButton("✅ Jalan", callback_data=f"ok:{key}"),
-                InlineKeyboardButton("❌ Batal", callback_data=f"no:{key}"),
-            ]]
-        )
+        self._pending[key] = (fut, chat_id)
+        rows = [[
+            InlineKeyboardButton("✅ Jalan", callback_data=f"ok:{key}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"no:{key}"),
+        ]]
+        if grant:
+            rows.append([InlineKeyboardButton("✅ Jalan & izinkan semua 30 menit", callback_data=f"gr:{key}")])
+        kb = InlineKeyboardMarkup(rows)
         msg = await self.tg.bot.send_message(int(chat_id), text[:4000], reply_markup=kb)
         try:
             return await asyncio.wait_for(fut, self.confirm_timeout)
@@ -111,15 +123,18 @@ class TelegramGateway(Gateway):
             await q.answer("Bukan untukmu.")
             return
         action, key = q.data.split(":", 1)
-        fut = self._pending.get(key)
+        fut, chat_id = self._pending.get(key, (None, ""))
         if not fut or fut.done():
             await q.answer("Sudah kedaluwarsa.")
             with contextlib.suppress(Exception):
                 await q.edit_message_reply_markup(None)
             return
-        fut.set_result(action == "ok")
+        label = {"ok": "✅ Disetujui", "no": "❌ Dibatalkan"}.get(action, "")
+        if action == "gr":
+            until = self.app.grants.grant(chat_id)
+            label = f"🔓 Disetujui + semua perintah sandbox bebas sampai {_hhmm(until)} (/kunci untuk cabut)"
+        fut.set_result(action in ("ok", "gr"))
         await q.answer()
-        label = "✅ Disetujui" if action == "ok" else "❌ Dibatalkan"
         with contextlib.suppress(Exception):
             await q.edit_message_text(f"{q.message.text}\n\n{label}")
 
@@ -154,7 +169,7 @@ class TelegramGateway(Gateway):
         typing = asyncio.create_task(self._keep_typing(ctx, update.effective_chat.id))
         try:
             reply = await self.agent.handle(
-                chat_id, text, confirm=lambda t: self.confirm(chat_id, t), images=images
+                chat_id, text, confirm=lambda t, **kw: self.confirm(chat_id, t, **kw), images=images
             )
         except Exception as e:
             log.exception("handle gagal")

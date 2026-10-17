@@ -19,6 +19,8 @@ class App:
     agent: "Agent"
     scheduler: "Scheduler"
     skills: "Skills"
+    outbox: "Outbox" = None
+    grants: "Grants" = None
     stop: asyncio.Event | None = None
     restart_requested: bool = False
     gateways: list = field(default_factory=list)
@@ -56,8 +58,9 @@ def build(settings: "Settings | None" = None) -> App:
     from .store import Store
     from .tools import Registry
     from .tools.core import register_core
+    from .tools.files import Outbox, Sandbox, register_files
     from .tools.schedule import register_schedule
-    from .tools.shell import register_shell
+    from .tools.shell import Grants, register_shell
     from .tools.skill import register_skill
     from .tools.video import register_video
     from .tools.web import register_web
@@ -79,15 +82,28 @@ def build(settings: "Settings | None" = None) -> App:
     register_web(tools, cfg.fetch_max_chars, cfg.search_backends)
     register_video(tools, media)
     register_skill(tools, skills)
+    outbox, grants = Outbox(), Grants()
     if cfg.sandbox_url and settings.get("shell.enabled") is not False:
-        register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout)
+        register_shell(tools, cfg.sandbox_url, cfg.sandbox_token, cfg.shell_timeout, grants)
+        register_files(tools, Sandbox(cfg.sandbox_url, cfg.sandbox_token), outbox)
     else:
         log.info("shell mati (butuh mode Docker / dimatikan di setup)")
+
+    ready = [x for x in cfg.sites if x.get("owner")]  # owner terisi = langkah sudo selesai
+    if cfg.host_address and ready and cfg.host_key and Path(cfg.host_key).exists():
+        from .tools.db import register_db
+        from .tools.host import Host, Sites, register_host
+
+        host = Host(cfg.host_address, cfg.host_port, cfg.host_user, cfg.host_key,
+                    str(Path(cfg.host_key).parent / "known_hosts"))
+        sites = Sites(host, ready)
+        register_host(tools, sites)
+        register_db(tools, sites)
 
     agent = Agent(cfg, store, memory, llm, tools, media, skills)
     scheduler = Scheduler(store, agent)
     register_schedule(tools, store, scheduler)
-    return App(settings, cfg, agent, scheduler, skills)
+    return App(settings, cfg, agent, scheduler, skills, outbox, grants)
 
 
 class Router:
@@ -105,9 +121,12 @@ class Router:
     async def send(self, chat_id: str, text: str) -> None:
         await self._gw(chat_id).send(chat_id, text)
 
+    async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
+        await self._gw(chat_id).send_file(chat_id, name, data, caption)
+
     def confirm_for(self, chat_id: str):
         g = self._gw(chat_id)
-        return lambda text: g.confirm(chat_id, text)
+        return lambda text, **kw: g.confirm(chat_id, text, **kw)
 
 
 async def run(app: App) -> bool:
@@ -129,6 +148,7 @@ async def run(app: App) -> bool:
     router = Router(app.gateways)
     app.scheduler.attach(router.send, router.confirm_for)
     app.skills.notify = router.send
+    app.outbox.send = router.send_file
 
     app.stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -11,7 +11,8 @@ from typing import Any, Awaitable, Callable
 log = logging.getLogger(__name__)
 
 
-Confirm = Callable[[str], Awaitable[bool]]
+# confirm(teks, grant=False) → bool. grant=True: tampilkan juga tombol "izinkan 30 menit".
+Confirm = Callable[..., Awaitable[bool]]
 
 
 @dataclass

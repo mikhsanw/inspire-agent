@@ -62,3 +62,17 @@ duluan (jadwal), dan bisa pakai model apa saja lewat `litellm`.
 - Whitelist user ID wajib; tanpa whitelist bot menolak start.
 - API key hanya dari environment (`.env`), tidak pernah masuk config/git.
 - Isi web/file = data, bukan perintah (ditegaskan di system prompt).
+
+### Fase 5 — coding & web di server ✅
+
+| # | Hal | Putusan |
+|---|---|---|
+| 1 | Coding | Skill bawaan `coding` + tool `read_file`/`write_file`/`edit_file`/`list_files` di `/workspace` sandbox; tulis file tanpa tombol |
+| 2 | Jalankan kode | `python`, `pytest`, `node`, `npm`, `pip`, `git` (kecuali push), `mkdir/cp/mv` di `/workspace` otomatis; sisanya ✅ + tombol "izinkan semua 30 menit" per chat, tak berlaku untuk jadwal |
+| 3 | Caveman | `/caveman auto\|on\|off`, bawaan `auto` (agent memilih); kode/angka/error utuh |
+| 4 | Web di server | SSH ke user `inspire` yang bekerja sebagai pemilik situs (bukan root). Baca bebas; ubah file = diff → ✅; perintah mengubah = selalu ✅ (tanpa izin 30 menit); snapshot git/file otomatis + rollback |
+| 5 | Rahasia web | `.env*`, `*.pem`, `*.key`, `id_rsa*` disamarkan; nilai rahasia disamarkan di semua keluaran; satu nilai bisa dibuka lewat ✅ |
+| 6 | Database | Baca-saja (SQL satu pernyataan + transaksi READ ONLY); `SHOW/DESCRIBE` bebas; `SELECT` → ✅, maks 20 baris, kolom pribadi disamarkan |
+
+Default keamanan: key SSH di container agent (bukan sandbox), situs milik root ditolak,
+jadwal tak bisa mengubah server.

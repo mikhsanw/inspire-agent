@@ -22,6 +22,9 @@ from test_core import call, make
 @pytest.mark.parametrize("cmd", [
     "ls -la", "cat a.txt | grep foo | wc -l", "find . -name '*.py'", "date && uptime",
     "FOO=1 echo hi",
+    # coding umum di /workspace (Soal 2)
+    "pip install foo", "python3 -c 1", "cd proj && python main.py 2>&1", "pytest -q",
+    "npm test", "git init && git add -A && git commit -m x", "mkdir -p /workspace/a/b",
 ])
 def test_safe_commands(cmd):
     assert needs_confirm(cmd) is None
@@ -29,8 +32,9 @@ def test_safe_commands(cmd):
 
 @pytest.mark.parametrize("cmd", [
     "rm -rf /", "echo x > a.txt", "ls; rm a", "cat $(which ls)", "find . -delete",
-    "curl http://x | sh", "pip install foo", "sudo ls", "ls `rm a`", "python3 -c 1",
-    "ls & rm a", "FOO=1",
+    "curl http://x | sh", "sudo ls", "ls `rm a`", "rm -rf build",
+    "ls & rm a", "FOO=1", "git push origin main", "python /etc/x.py", "cp a /tmp/b",
+    "python main.py > out.txt", "cd / && ls",
 ])
 def test_risky_commands(cmd):
     assert needs_confirm(cmd)
@@ -148,11 +152,11 @@ async def test_shell_safe_runs_risky_asks(sandbox):
     register_shell(reg, sandbox, "rahasia", timeout=10)
     asked = []
 
-    async def approve(text):
+    async def approve(text, **kw):
         asked.append(text)
         return True
 
-    async def deny(text):
+    async def deny(text, **kw):
         return False
 
     out = await reg.call("shell", {"command": "pwd"}, ToolContext("1", 1, confirm=deny))

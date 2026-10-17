@@ -64,10 +64,11 @@ KEY_SECTIONS = {
 }
 
 # Urutan tampil. "model", "shell", "youtube", "zona" punya alur sendiri.
-ORDER = ["telegram", "model", "suara", "gambar", "discord", "shell", "youtube", "zona"]
+ORDER = ["telegram", "model", "suara", "gambar", "discord", "shell", "web", "gaya", "youtube", "zona"]
 TITLES = {
     "telegram": "Telegram", "model": "Model AI", "suara": "Suara", "gambar": "Gambar",
-    "discord": "Discord", "shell": "Shell", "youtube": "YouTube", "zona": "Zona waktu",
+    "discord": "Discord", "shell": "Shell & coding", "web": "Web di server", "gaya": "Gaya jawaban",
+    "youtube": "YouTube", "zona": "Zona waktu",
 }
 NEEDS_RESTART = {"telegram", "discord", "shell"}
 
@@ -180,6 +181,14 @@ async def status(settings: Settings, live: bool = False) -> list[Feature]:
         add("shell", "on" if ok else "err", msg, "" if ok else "docker compose up -d sandbox")
     else:
         add("shell", "on", "sandbox Docker")
+
+    if cfg.sites and all(x.get("owner") for x in cfg.sites):
+        add("web", "on", ", ".join(x["name"] for x in cfg.sites))
+    elif cfg.sites:
+        add("web", "err", "situs dicatat, langkah sudo belum selesai", "inspire setup web (di server)")
+    else:
+        add("web", "off", "", "inspire setup web (di server)")
+    add("gaya", "on", {"auto": "otomatis", "on": "caveman", "off": "normal"}.get(cfg.caveman, cfg.caveman))
 
     cookies = cfg.media.ytdlp_cookies
     add("youtube", "on" if cookies else "off",

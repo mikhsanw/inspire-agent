@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import time
 
 import httpx
 
@@ -16,13 +17,30 @@ SAFE = {
     "file", "stat", "tree", "which", "basename", "dirname", "realpath", "printf",
     "true", "cal", "uptime", "free", "nproc", "id", "md5sum", "sha256sum", "diff",
 }
+# Perintah coding umum: jalan otomatis selama semua path-nya di /workspace.
+CODING = {
+    "python", "python3", "pytest", "node", "npx", "npm", "pip", "pip3", "git",
+    "mkdir", "touch", "cp", "mv", "zip", "unzip", "tar", "cd", "ruff", "black", "tsc",
+}
+# Sub-perintah yang tetap minta tombol.
+CODING_RISKY = {("git", "push"), ("npm", "publish"), ("pip", "uninstall"), ("pip3", "uninstall")}
 # find dengan opsi ini bisa mengubah / menjalankan sesuatu.
 FIND_RISKY = {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fls"}
 SPLIT = re.compile(r"\|\||&&|;|\||\n|&")
 
 
+def _outside_workspace(words: list[str]) -> str | None:
+    for w in words[1:]:
+        val = w.split("=", 1)[1] if w.startswith("-") and "=" in w else w
+        if val.startswith("/") and not (val == "/workspace" or val.startswith("/workspace/")
+                                       or val == "/dev/null"):
+            return val
+    return None
+
+
 def needs_confirm(command: str) -> str | None:
-    """None = aman. Selain itu: alasan kenapa perlu persetujuan."""
+    """None = boleh jalan otomatis. Selain itu: alasan kenapa perlu persetujuan."""
+    command = command.replace("2>&1", "")  # gabung stderr: bukan redirect ke file
     if any(t in command for t in (">", "`", "$(", "<(")):
         return "ada redirect / substitusi"
     for seg in SPLIT.split(command):
@@ -39,20 +57,51 @@ def needs_confirm(command: str) -> str | None:
         if not words:
             return "assignment variabel"
         cmd = words[0]
+        if cmd in CODING:
+            if (cmd, words[1] if len(words) > 1 else "") in CODING_RISKY:
+                return f"'{cmd} {words[1]}' keluar dari sandbox"
+            if path := _outside_workspace(words):
+                return f"menyentuh {path} di luar /workspace"
+            continue
         if cmd not in SAFE:
-            return f"'{cmd}' bukan perintah baca-saja"
+            return f"'{cmd}' bukan perintah baca-saja / coding"
         if cmd == "find" and FIND_RISKY & set(words):
             return "find dengan aksi"
     return None
 
 
-def register_shell(reg: Registry, url: str, token: str, timeout: int = 60) -> None:
+class Grants:
+    """Izin sementara per chat: semua perintah sandbox jalan tanpa tombol."""
+
+    def __init__(self, minutes: int = 30):
+        self.minutes = minutes
+        self._until: dict[str, float] = {}
+
+    def grant(self, chat_id: str) -> float:
+        self._until[chat_id] = time.time() + self.minutes * 60
+        return self._until[chat_id]
+
+    def active(self, chat_id: str) -> bool:
+        return self._until.get(chat_id, 0) > time.time()
+
+    def revoke(self, chat_id: str) -> bool:
+        return self._until.pop(chat_id, 0) > time.time()
+
+
+def register_shell(
+    reg: Registry, url: str, token: str, timeout: int = 60, grants: Grants | None = None
+) -> None:
+    grants = grants or Grants()
+
     async def shell(ctx: ToolContext, command: str, timeout_s: int = timeout) -> str:
         reason = needs_confirm(command)
-        if reason and not ctx.auto_approve_shell:
+        # Izin 30 menit hanya untuk chat interaktif, tidak untuk jadwal.
+        granted = not ctx.is_job and grants.active(ctx.chat_id)
+        if reason and not ctx.auto_approve_shell and not granted:
             if not ctx.confirm:
                 return f"Ditolak: perintah butuh persetujuan ({reason}) tapi tak bisa bertanya."
-            ok = await ctx.confirm(f"🖥 Jalankan di sandbox? ({reason})\n\n$ {command[:3000]}")
+            text = f"🖥 Jalankan di sandbox? ({reason})\n\n$ {command[:3000]}"
+            ok = await (ctx.confirm(text) if ctx.is_job else ctx.confirm(text, grant=True))
             if not ok:
                 return "User menolak / tidak menjawab. Perintah TIDAK dijalankan."
         try:
@@ -79,8 +128,10 @@ def register_shell(reg: Registry, url: str, token: str, timeout: int = 60) -> No
             name="shell",
             description=(
                 "Jalankan perintah bash di sandbox Linux terpisah (cwd /workspace, user "
-                "non-root, ada internet, python3, git, curl). File di /workspace awet. "
-                "Perintah baca-saja jalan langsung; yang lain menunggu persetujuan user."
+                "non-root, ada internet, python3, node, git, curl). File di /workspace awet. "
+                "Perintah baca-saja dan coding umum (python, pytest, node, npm, pip, git, "
+                "mkdir/cp/mv) di /workspace jalan langsung; yang lain menunggu persetujuan user. "
+                "Untuk menulis file pakai write_file/edit_file, bukan redirect >."
             ),
             parameters={
                 "type": "object",

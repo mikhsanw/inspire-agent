@@ -35,7 +35,7 @@ def test_skills_crud_git_undo(tmp_path):
     assert sk.save("cek-ssl", "x", "y", create=True).startswith("Error: skill 'cek-ssl' sudah ada")
     assert "diperbarui" in sk.save("cek-ssl", "Cek SSL", "langkah baru", create=False)
     assert sk.get("cek-ssl").body == "langkah baru"
-    assert sk.index() == "- cek-ssl: Cek SSL"
+    assert sk.index().startswith("- cek-ssl: Cek SSL\n")
     hist = sk.history()
     assert "create: cek-ssl" in hist and "update: cek-ssl" in hist
 
@@ -51,7 +51,7 @@ def test_skills_undo_first_commit(tmp_path):
     sk = Skills(tmp_path / "s")
     sk.save("satu", "d", "b", create=True)
     assert "Dibatalkan" in sk.undo()
-    assert sk.all() == []
+    assert sk.get("satu") is None
 
 
 async def test_skill_tool_notifies_and_shows_in_next_session(tmp_path):
@@ -92,7 +92,7 @@ async def test_shared_commands(tmp_path):
     assert "Sesi baru" in await command(app, "1", "new", [], "/")
     assert "▶ fake" in await command(app, "1", "model", [], "/")
     assert "Tak ada model" in await command(app, "1", "model", ["nope"], "/")
-    assert "belum ada skill" in await command(app, "1", "skills", [], "/")
+    assert "coding" in await command(app, "1", "skills", [], "/")
     assert "tak dikenal" in await command(app, "1", "xyz", [], "/")
     assert "Status inspire" in await command(app, "1", "status", [], "/")
 

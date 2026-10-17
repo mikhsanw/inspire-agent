@@ -20,6 +20,8 @@ HELP = """Perintah:
 {p}jobs — lihat jadwal aktif
 {p}skills — daftar skill + riwayat perubahan
 {p}skillundo — batalkan perubahan skill terakhir
+{p}caveman auto|on|off — gaya jawaban singkat
+{p}kunci — cabut izin "semua perintah 30 menit"
 {p}setup — atur model, suara, gambar, dll (Telegram)
 {p}status — fitur mana yang aktif
 {p}help — bantuan ini"""
@@ -71,6 +73,10 @@ class Gateway(ABC):
         """Kirim pesan duluan (jadwal, notif skill)."""
 
     @abstractmethod
+    async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
+        """Kirim lampiran (hasil kerja di sandbox)."""
+
+    @abstractmethod
     async def confirm(self, chat_id: str, text: str) -> bool:
         """Tombol ✅/❌. Tak dijawab sampai timeout = False."""
 
@@ -106,6 +112,21 @@ async def command(app, chat_id: str, name: str, args: list[str], p: str) -> str:
         from ..setup import render, status
 
         return "Status inspire:\n\n" + render(await status(app.settings, live=True))
+    if name == "caveman":
+        modes = {"auto": "otomatis", "on": "selalu caveman", "off": "normal"}
+        if not args:
+            return f"Gaya sekarang: {modes.get(app.cfg.caveman, app.cfg.caveman)}. Pilih: {p}caveman auto|on|off"
+        if args[0] not in modes:
+            return f"Pilih: {p}caveman auto|on|off"
+        app.settings.set("style.caveman", args[0])
+        app.reload()
+        return {"on": "Oke. Mode caveman. Jawab pendek.", "off": "Oke, gaya normal.",
+                "auto": "Oke, gaya otomatis: singkat untuk hal ringan, normal untuk penjelasan."}[args[0]]
+    if name == "kunci":
+        grants = getattr(app, "grants", None)
+        if grants and grants.revoke(chat_id):
+            return "🔒 Izin sementara dicabut. Perintah berisiko kembali minta tombol."
+        return "Tak ada izin sementara yang aktif."
     if name == "setup":
         return "Setup lengkap ada di Telegram (/setup) atau di terminal server: `inspire setup`."
     if name in ("start", "help"):

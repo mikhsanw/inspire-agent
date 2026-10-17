@@ -44,6 +44,12 @@ class Config:
     discord_token: str = ""
     discord_user_ids: list[int] = field(default_factory=list)
     discord_prefix: str = "!"
+    caveman: str = "auto"         # auto | on | off
+    host_address: str = ""        # SSH ke server web; kosong = fitur web mati
+    host_port: int = 22
+    host_user: str = "inspire"
+    host_key: str = ""            # path private key
+    sites: list = field(default_factory=list)  # [{name, path, owner}]
     memory_chars: int = 2200
     user_chars: int = 1400
     max_context_tokens: int = 48000
@@ -100,6 +106,7 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
     fallback = [n for n in (m.get("fallback") or []) if n in models]
 
     dc = raw.get("discord", {})
+    host = raw.get("host", {})
 
     return Config(
         data_dir=data_dir,
@@ -108,6 +115,13 @@ def from_raw(raw: dict, data_dir: Path) -> Config:
         discord_token=dc.get("token", ""),
         discord_user_ids=_ids(dc.get("allowed_user_ids")),
         discord_prefix=dc.get("command_prefix", "!"),
+        caveman=str((raw.get("style") or {}).get("caveman", "auto")),
+        host_address=host.get("address", ""),
+        host_port=int(host.get("port", 22)),
+        host_user=host.get("user", "inspire"),
+        host_key=str(data_dir / host["key"]) if host.get("key") and not str(host["key"]).startswith("/")
+        else host.get("key", ""),
+        sites=list(host.get("sites") or []),
         models=models,
         default_model=default,
         fallback=fallback,

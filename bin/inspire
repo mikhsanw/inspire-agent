@@ -18,6 +18,15 @@ py() {
   INSPIRE_HOME="$DIR/data" INSPIRE_MODE="$MODE" uv run --project "$DIR" --no-dev -q inspire "$@"
 }
 
+inside() {  # jalankan perintah python inspire (di container atau native)
+  if [ "$MODE" = docker ]; then
+    # `run --rm` memakai image & volume yang sama dengan service.
+    dc run --rm --no-deps inspire inspire "$@"
+  else
+    py "$@"
+  fi
+}
+
 running() {
   if [ "$MODE" = docker ]; then
     [ -n "$(dc ps -q --status running inspire 2>/dev/null)" ]
@@ -42,11 +51,23 @@ svc() {  # start|stop|restart
 
 case "${1:-help}" in
   setup|doctor|pair)
-    if [ "$MODE" = docker ]; then
-      # `run --rm` memakai image & volume yang sama dengan service.
-      dc run --rm --no-deps inspire inspire "$@"
-    else
-      py "$@"
+    inside "$@"
+    if [ "$1 ${2:-}" = "setup web" ]; then
+      # Bagian yang butuh root berjalan di host, bukan di container.
+      if [ "$(uname -s)" != Linux ]; then
+        echo "⚠️  Bagian sudo (user 'inspire', sudoers) hanya untuk server Linux. Dilewati."
+      elif [ -s "$DIR/data/ssh/sites.txt" ]; then
+        echo
+        echo "Langkah berikut butuh sudo di server ini:"
+        echo "  • buat user 'inspire' + pasang key SSH agent"
+        echo "  • izinkan 'inspire' bekerja sebagai PEMILIK tiap folder situs (bukan root)"
+        echo "  • izinkan reload/restart nginx, apache2, php-fpm"
+        read -r -p "Lanjut? [Y/n] " ans
+        if [[ ! "$ans" =~ ^[Nn] ]]; then
+          sudo bash "$DIR/bin/setup-web.sh" "$DIR/data/ssh"
+          inside setup web-test
+        fi
+      fi
     fi
     # Setelan baru (token, gateway) → nyalakan ulang service kalau sedang jalan.
     if [ "$1" = setup ] && running; then
@@ -84,7 +105,7 @@ case "${1:-help}" in
 inspire — agent AI pribadi ($MODE, $DIR)
 
   inspire setup [bagian]   atur (tanpa bagian = wizard Cepat/Lengkap)
-                           bagian: telegram pair model suara gambar discord shell youtube zona
+                           bagian: telegram pair model suara gambar discord shell youtube zona web
   inspire doctor           cek semua fitur & key
   inspire pair             tampilkan kode pairing
   inspire start|stop|restart|status

@@ -106,6 +106,10 @@ class TelegramSetup:
                 self.app.reload()
                 self.app.agent.llm.set_active(arg)
             return await self.section(update, "model")
+        if action == "gaya":
+            self.settings.set("style.caveman", arg)
+            self.app.reload()
+            return await self.section(update, "gaya")
         if action == "shell":
             self.settings.set("shell.enabled", arg == "on")
             self.settings.skip("shell", arg != "on")
@@ -169,6 +173,26 @@ class TelegramSetup:
                 update,
                 f"{head}\n\nAgent bisa menjalankan perintah di sandbox. Perintah berisiko tetap minta tombol.",
                 kb([("⏸ Matikan" if on else "▶ Nyalakan", f"su:shell:{'off' if on else 'on'}")], [BACK]),
+            )
+
+        if sid == "web":
+            sites = self.app.cfg.sites
+            lines = "\n".join(f"• {x['name']} — {x['path']} (sebagai {x.get('owner') or '?'})" for x in sites)
+            return await self._show(
+                update,
+                f"{head}\n\n{lines or 'Belum ada situs.'}\n\nMenambah situs butuh akses root di server, jadi "
+                "hanya bisa dari terminal server:\n  inspire setup web",
+                kb([("⏸ Lewati", "su:skip:web"), BACK]),
+            )
+
+        if sid == "gaya":
+            cur = self.app.cfg.caveman
+            opts = [("auto", "🤖 Otomatis"), ("on", "🪨 Caveman"), ("off", "💬 Normal")]
+            return await self._show(
+                update,
+                f"{head}\n\nOtomatis: singkat untuk hal ringan, normal untuk penjelasan.\n"
+                "Caveman: selalu sangat singkat (hemat token). Normal: biasa.",
+                kb([(("▶ " if m == cur else "") + label, f"su:gaya:{m}") for m, label in opts], [BACK]),
             )
 
         if sid == "youtube":

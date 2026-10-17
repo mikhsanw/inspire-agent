@@ -257,6 +257,79 @@ def step_telegram(s: Settings) -> bool:
     return True
 
 
+def step_web(s: Settings) -> None:
+    head("Web di server (opsional)")
+    say("Agent bisa memeriksa & memperbaiki web di server ini lewat SSH ke user khusus 'inspire'.")
+    say("Baca langsung jalan; setiap perubahan menampilkan diff dan menunggu tombolmu.")
+    sites = list(s.get("host.sites") or [])
+    if sites:
+        say("Terdaftar: " + ", ".join(f"{x['name']} ({x['path']})" for x in sites))
+    if not yes("Tambah / ubah situs?", not sites):
+        if not sites:
+            s.skip("web")
+        return
+    while True:
+        path = ask("Path folder situs di server (mis. /var/www/perizinan, Enter = selesai)")
+        if not path:
+            break
+        if not path.startswith("/"):
+            bad("Harus path absolut.")
+            continue
+        name = ask("Nama singkat", Path(path).name.lower().replace(" ", "-"))
+        sites = [x for x in sites if x["name"] != name] + [{"name": name, "path": path.rstrip("/"), "owner": ""}]
+    if not sites:
+        s.skip("web")
+        return
+    ssh_dir = s.dir / "ssh"
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    key = ssh_dir / "id_ed25519"
+    if not key.exists():
+        import subprocess
+
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "inspire-agent", "-f", str(key)],
+                       check=True)
+        ok("Key SSH agent dibuat (data/ssh/id_ed25519).")
+    (ssh_dir / "sites.txt").write_text("".join(f"{x['name']}|{x['path']}\n" for x in sites))
+    address = s.get("host.address") or (
+        "host.docker.internal" if os.environ.get("INSPIRE_MODE") == "docker" else "127.0.0.1")
+    s.set("host", {**(s.get("host") or {}), "address": address, "port": int(s.get("host.port") or 22),
+                   "user": "inspire", "key": "ssh/id_ed25519", "sites": sites})
+    s.skip("web", False)
+    ok(f"{len(sites)} situs dicatat.")
+    if not os.environ.get("INSPIRE_MODE"):
+        say("Langkah sudo (buat user 'inspire', sudoers) dijalankan oleh perintah server:")
+        say(f"  sudo bash bin/setup-web.sh {ssh_dir}   lalu   inspire setup web-test")
+
+
+def step_web_test(s: Settings) -> None:
+    """Dipanggil setelah setup-web.sh: catat pemilik tiap situs, uji SSH."""
+    head("Uji akses web")
+    owners_file = s.dir / "ssh" / "owners.txt"
+    owners = dict(line.split("|", 1) for line in owners_file.read_text().split() if "|" in line) \
+        if owners_file.exists() else {}
+    sites = [{**x, "owner": owners[x["name"]].strip()} for x in (s.get("host.sites") or []) if x["name"] in owners]
+    s.set("host.sites", sites)
+    if not sites:
+        bad("Tak ada situs yang bisa dipakai (lihat pesan di atas).")
+        return
+    from ..config import from_settings
+    from ..tools.host import Host
+
+    cfg = from_settings(s)
+    host = Host(cfg.host_address, cfg.host_port, cfg.host_user, cfg.host_key,
+                str(Path(cfg.host_key).parent / "known_hosts"))
+    for site in sites:
+        script = host.as_owner(site["owner"], f"cd {site['path']} && test -r . && echo ok && "
+                                              "(grep -E '^DB_CONNECTION=' .env 2>/dev/null || true)")
+        code, out, err = run(host.run(script, timeout=20))
+        if code == 0 and out.startswith("ok"):
+            db = out.splitlines()[1].split("=", 1)[1] if len(out.splitlines()) > 1 else "tanpa DB"
+            ok(f"{site['name']}: SSH ✓, bekerja sebagai {site['owner']}, database: {db}")
+        else:
+            bad(f"{site['name']}: {(err or out).strip()[:200]}")
+            say("    Cek: sshd jalan? firewall mengizinkan dari Docker? AllowUsers di sshd_config?")
+
+
 STEPS = {
     "telegram": step_telegram,
     "pair": step_pair_telegram,
@@ -267,6 +340,8 @@ STEPS = {
     "shell": step_shell,
     "youtube": step_youtube,
     "zona": step_zona,
+    "web": step_web,
+    "web-test": step_web_test,
 }
 
 
@@ -300,6 +375,8 @@ def summary(s: Settings) -> None:
     head("Status")
     say(S.render(run(S.status(s, live=True))))
     say()
+    if not s.get("host.sites"):
+        say("Mau agent bisa memperbaiki web di server ini? " + c("inspire setup web", "1"))
     if os.environ.get("INSPIRE_MODE") in ("docker", "native"):
         say("Ubah kapan saja: " + c("inspire setup <bagian>", "1") + " atau " + c("/setup", "1") + " di Telegram.")
     else:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import logging
 from pathlib import Path
 
@@ -17,10 +18,24 @@ MAX_DOWNLOAD = 25 * 1024 * 1024
 
 
 class ConfirmView(discord.ui.View):
-    def __init__(self, allowed: set[int], timeout: float):
+    def __init__(self, allowed: set[int], timeout: float, on_grant=None):
         super().__init__(timeout=timeout)
         self.allowed = allowed
         self.result = False
+        self.on_grant = on_grant  # None = tak ada tombol izin 30 menit
+        if on_grant:
+            b = discord.ui.Button(label="Jalan & izinkan semua 30 menit", emoji="🔓",
+                                  style=discord.ButtonStyle.secondary)
+            b.callback = self._grant
+            self.add_item(b)
+
+    async def _grant(self, interaction: discord.Interaction) -> None:
+        until = self.on_grant()
+        self.result = True
+        self.stop()
+        await interaction.response.edit_message(
+            content=f"{interaction.message.content}\n\n🔓 Disetujui + semua perintah sandbox bebas "
+                    f"sampai <t:{int(until)}:t> (!kunci untuk cabut)", view=None)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id not in self.allowed:
@@ -96,9 +111,14 @@ class DiscordGateway(Gateway):
         for chunk in split_text(text, MAX_LEN):
             await ch.send(chunk)
 
-    async def confirm(self, chat_id: str, text: str) -> bool:
+    async def send_file(self, chat_id: str, name: str, data: bytes, caption: str = "") -> None:
         ch = await self._channel(chat_id)
-        view = ConfirmView(self.allowed, self.confirm_timeout)
+        await ch.send(caption[:MAX_LEN] or None, file=discord.File(io.BytesIO(data), filename=name))
+
+    async def confirm(self, chat_id: str, text: str, grant: bool = False) -> bool:
+        ch = await self._channel(chat_id)
+        on_grant = (lambda: self.app.grants.grant(chat_id)) if grant else None
+        view = ConfirmView(self.allowed, self.confirm_timeout, on_grant)
         msg = await ch.send(text[:MAX_LEN], view=view)
         if await view.wait():  # True = timeout
             with contextlib.suppress(Exception):
@@ -164,7 +184,7 @@ class DiscordGateway(Gateway):
                 reply = await self.agent.handle(
                     chat_id,
                     "\n\n".join(parts),
-                    confirm=lambda t: self.confirm(chat_id, t),
+                    confirm=lambda t, **kw: self.confirm(chat_id, t, **kw),
                     images=images or None,
                 )
         except Exception as e:

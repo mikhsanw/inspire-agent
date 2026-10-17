@@ -2,8 +2,9 @@
 
 **Agent AI pribadi ala [Hermes](https://github.com/NousResearch/hermes-agent), dibangun dari nol.**
 Ngobrol lewat Telegram atau Discord, ingat jangka panjang, bisa mengirim pengingat
-duluan, mencari di web, menjalankan perintah di sandbox, mendengar voice note,
-melihat gambar, membaca file, merangkum video, dan belajar cara kerja baru sendiri.
+duluan, mencari di web, menulis & menjalankan kode di sandbox, memeriksa dan
+memperbaiki web di servermu (dengan persetujuanmu), mendengar voice note, melihat
+gambar, membaca file, merangkum video, dan belajar cara kerja baru sendiri.
 Bisa memakai model apa saja, termasuk model gratis.
 
 ```bash
@@ -24,6 +25,9 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 - [Memori, sesi, dan skill](#memori-sesi-dan-skill)
 - [Jadwal & pengingat](#jadwal--pengingat)
 - [Suara, gambar, file, video](#suara-gambar-file-video)
+- [Coding](#coding)
+- [Web di server](#web-di-server)
+- [Gaya jawaban (caveman)](#gaya-jawaban-caveman)
 - [Shell & keamanan](#shell--keamanan)
 - [Data & backup](#data--backup)
 - [Setelan lanjutan](#setelan-lanjutan)
@@ -43,6 +47,9 @@ curl -fsSL https://raw.githubusercontent.com/mikhsanw/inspire-agent/main/install
 | ⏰ | **Jadwal** | "Ingatkan besok jam 7", "tiap Senin rangkum berita". Agent mengirim pesan duluan |
 | 🌐 | **Web** | Cari (DuckDuckGo/Bing/Yahoo, tanpa API key) dan baca halaman |
 | 🖥 | **Shell sandbox** | Perintah jalan di container terpisah. Yang berisiko minta tombol ✅/❌ |
+| 👩‍💻 | **Coding** | Tulis, jalankan, tes, dan perbaiki kode di sandbox tanpa tombol bertubi-tubi. Hasil dikirim sebagai file |
+| 🛠 | **Web di server** | Baca log, kode, dan database web Laravel/PHP di servermu; perubahan tampil sebagai diff → ✅, dengan snapshot & rollback |
+| 🪨 | **Gaya caveman** | Jawaban super singkat untuk hal ringan (hemat token), normal untuk penjelasan |
 | 🎙 | **Suara** | Voice note → teks (Groq Whisper, gratis) |
 | 🖼 | **Gambar** | Dilihat langsung oleh model vision, atau dideskripsikan dulu (Gemini, gratis) |
 | 📎 | **File** | PDF, DOCX, XLSX, teks/kode diekstrak. Salinan bisa diolah lewat shell |
@@ -65,7 +72,8 @@ flowchart LR
     T --> SK[(skills/*.md<br/>git)]
     T --> WEB[web search / fetch]
     T --> VID[yt-dlp + Whisper]
-    T -->|HTTP + token| SB[[Sandbox container<br/>shell]]
+    T -->|HTTP + token| SB[[Sandbox container<br/>shell · file · coding]]
+    T -->|SSH, user inspire<br/>sudo -u pemilik situs| HOST[[Server web<br/>situs · log · DB baca-saja]]
 ```
 
 Loop agent sengaja tipis (tanpa framework): pesan masuk → model → kalau model
@@ -148,6 +156,8 @@ inspire doctor           # status semua fitur + tes semua key
 | `gambar` | Deskripsi gambar | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | ✅ |
 | `discord` | Token bot Discord | [Developer Portal](https://discord.com/developers/applications) | ✅ |
 | `shell` | Nyala/matikan sandbox | — (butuh mode Docker) | ✅ |
+| `web` | Situs di server ini (hanya dari terminal, butuh sudo) | — | ✅ |
+| `gaya` | Gaya jawaban: otomatis / caveman / normal | — | ✅ |
 | `youtube` | `cookies.txt` untuk YouTube | ekstensi "Get cookies.txt LOCALLY" | ✅ |
 | `zona` | Zona waktu, mis. `Asia/Jakarta` | — | ✅ |
 
@@ -181,7 +191,9 @@ Bot menjawab di DM, atau di server kalau di-mention.
 | 🎙 voice note | Ditranskrip (transkrip ditampilkan), lalu dijawab |
 | 🖼 foto struk + "totalnya berapa?" | Dilihat / dideskripsikan, lalu dijawab |
 | 📎 PDF laporan + "poin pentingnya?" | Teks diekstrak lalu dirangkum |
-| "Buat skrip python hitung BMI dan jalankan" | Shell di sandbox, minta ✅ sebelum menulis file |
+| "Buat skrip python hitung BMI, tes, kirim filenya" | Tulis → jalankan → tes di sandbox tanpa tombol, lalu file dikirim |
+| "Web perizinan error 500 di halaman pengajuan" | Baca log & kode di server, usulkan perbaikan, diff → ✅ |
+| "Berapa pengajuan yang statusnya proses?" | `SELECT` ke DB situs → ✅, kolom pribadi disamarkan |
 
 ### Perintah chat
 
@@ -197,6 +209,8 @@ Telegram pakai `/`, Discord pakai `!`.
 | `/jobs` | Jadwal aktif |
 | `/skills` | Daftar skill + riwayat perubahan |
 | `/skillundo` | Batalkan perubahan skill terakhir |
+| `/caveman auto\|on\|off` | Gaya jawaban |
+| `/kunci` | Cabut izin "semua perintah sandbox 30 menit" |
 | `/help` | Bantuan |
 
 ### Perintah server
@@ -271,13 +285,85 @@ dikirim ke chat tempat jadwal dibuat. Kalau server mati sebentar, jadwal yang te
 File kiriman juga disalin ke `/workspace/inbox` di sandbox, jadi agent bisa mengolahnya
 lewat shell (mode Docker).
 
+## Coding
+
+Agent menulis kode di sandbox (`/workspace`) dengan tool `write_file`, `edit_file`,
+`read_file`, `list_files`, lalu menjalankannya lewat `shell`. Skill bawaan `coding`
+memandu alurnya: pahami → tulis kecil → jalankan → baca error → perbaiki → tes → serahkan.
+
+| Tanpa tombol | Minta tombol |
+|---|---|
+| Menulis/mengubah file di `/workspace` | `rm`, redirect `>`, `$(…)`, `sudo`, `curl` |
+| `python`, `pytest`, `node`, `npx`, `npm`, `pip`, `git` (kecuali `push`), `mkdir/cp/mv/zip/tar`, `cd` | Apa pun yang menyentuh path di luar `/workspace` |
+| Perintah baca (`ls`, `cat`, `grep`, …) | `git push`, `npm publish`, `pip uninstall` |
+
+Saat tombol muncul, ada pilihan **"✅ Jalan & izinkan semua 30 menit"**: selama itu semua
+perintah sandbox di chat tersebut jalan tanpa tanya. Habis sendiri setelah 30 menit, bisa
+dicabut dengan `/kunci`, dan **tidak pernah** berlaku untuk jadwal atau server.
+
+Hasil kerja dikirim ke chat dengan `send_file` (maks 20MB). Butuh mode Docker.
+
+## Web di server
+
+Agent bisa memeriksa dan memperbaiki web yang jalan di server yang sama, misalnya
+aplikasi Laravel di `/var/www/…`.
+
+**Pasang** (di terminal server, butuh sudo):
+
+```bash
+inspire setup web
+```
+
+1. Daftarkan folder situs (path + nama singkat).
+2. Agent membuat key SSH sendiri (`data/ssh/`, tetap di container agent, **tidak** di sandbox).
+3. Dengan sudo: membuat user `inspire`, memasang key-nya, dan sudoers terbatas:
+   bekerja **sebagai pemilik folder situs** (bukan root) + reload/restart nginx,
+   apache2, php-fpm. Situs milik root ditolak.
+4. Menguji koneksi dan mendeteksi database dari `.env` situs.
+
+**Tool agent**
+
+| Tool | Tanpa tombol | Dengan tombol |
+|---|---|---|
+| `host_run` | `ls`, `cat`, `tail log`, `git status/log/diff`, `php artisan route:list/about/migrate:status`, `curl` GET, `systemctl status` | Semua yang lain (`artisan migrate`, `composer`, `npm run build`, `git pull`, …) |
+| `host_read` | Baca file situs (rahasia tampil `***`) | — |
+| `host_edit` / `host_write` | — | Selalu: **diff** ditampilkan dulu |
+| `host_service` | `status`, `test` (`nginx -t`) | `reload`, `restart` |
+| `host_rollback` | Daftar snapshot | Kembalikan |
+| `host_reveal` | — | Tampilkan satu nilai `.env` ke model |
+| `db_query` | `SHOW`, `DESCRIBE`, `EXPLAIN` | `SELECT` (maks 20 baris, kolom pribadi disamarkan) |
+
+**Pengaman**
+
+- **Snapshot otomatis** sebelum setiap perubahan: di repo git disimpan sebagai
+  `refs/inspire/<waktu>` (tidak mengubah branch atau working tree-mu); bukan git →
+  salinan file di `~/.inspire-backup/`. `host_rollback` untuk kembali.
+- **Rahasia**: `.env*`, `*.pem`, `*.key`, `id_rsa*` tampil sebagai `KEY=***`, dan nilai
+  rahasia dari `.env` (password, key, token) disamarkan di **semua** keluaran, termasuk
+  log dan `artisan config:show`. File rahasia tak bisa diubah agent.
+- **Database baca-saja dua lapis**: SQL harus satu pernyataan `SELECT/WITH/SHOW/DESCRIBE/
+  EXPLAIN`, **dan** dijalankan dalam transaksi `READ ONLY` (server menolak penulisan).
+  Kolom seperti `nik`, `nama`, `alamat`, `email`, `hp/telp`, `password`, `token`, `npwp`,
+  `tgl_lahir` otomatis jadi `***`. Password DB lewat stdin, tak pernah di argumen proses.
+- **Izin 30 menit tidak berlaku** di server; jadwal tak bisa mengubah server.
+- **Cabut semua akses** kapan saja: `sudo rm /etc/sudoers.d/inspire /home/inspire/.ssh/authorized_keys`.
+
+> ⚠️ Tombolmu berdampak nyata ke web live. Baca diff dan perintahnya sebelum menekan ✅.
+
+## Gaya jawaban (caveman)
+
+`/caveman auto` (bawaan): obrolan ringan dan jawaban singkat ala caveman, penjelasan
+dan langkah teknis tetap normal. `/caveman on`: selalu super singkat (paling hemat token,
+cocok untuk model gratis). `/caveman off`: normal. Kode, perintah, angka, dan error selalu
+utuh. Bisa juga lewat `/setup` → Gaya jawaban.
+
 ## Shell & keamanan
 
 - **Sandbox terpisah**: shell jalan di container `sandbox` sebagai user non-root, tanpa
   capability, dengan batas RAM/CPU/jumlah proses. Port tidak dibuka ke host. Sandbox tidak
   bisa melihat `settings.json`, database, atau memori.
-- **Persetujuan**: perintah baca-saja (`ls`, `cat`, `grep`, …) langsung jalan. Selain itu
-  (termasuk redirect `>`, `$(…)`, `curl`, `python`) minta tombol ✅/❌. Tak dijawab 5 menit = batal.
+- **Persetujuan**: perintah baca-saja dan coding umum di `/workspace` langsung jalan
+  (lihat [Coding](#coding)). Selain itu minta tombol ✅/❌. Tak dijawab 5 menit = batal.
 - **Jadwal + shell**: jadwal yang boleh menjalankan shell tanpa tanya wajib kamu setujui
   saat dibuat.
 - **Hanya pemilik**: bot mengabaikan semua orang kecuali yang sudah di-pair.
@@ -300,6 +386,7 @@ Semua data ada di `~/inspire/data/`:
 | `skills/` | Skill (repo git sendiri) |
 | `SOUL.md` | Opsional, kepribadian |
 | `cookies.txt` | Opsional, cookies YouTube |
+| `ssh/` | Key SSH agent ke server + daftar situs (fitur web) |
 
 **Backup** cukup salin folder `data/`:
 
@@ -349,6 +436,8 @@ Rujuk key dengan `${NAMA_KEY}`. Jangan menulis key langsung di `config.yaml`.
 | Web search "tidak ada hasil" | DuckDuckGo diblokir sebagian ISP Indonesia; Bing/Yahoo dicoba otomatis. Di VPS luar biasanya normal |
 | Shell ⬜ "butuh mode Docker" | Pasang Docker, lalu jalankan installer lagi (data tetap) |
 | Discord diam | Nyalakan *Message Content Intent*, lalu `inspire restart` |
+| `inspire setup web-test` gagal SSH | sshd jalan? `AllowUsers` di `sshd_config` memuat `inspire`? Firewall mengizinkan koneksi dari jaringan Docker ke port 22? |
+| Agent tak bisa mengedit file situs | Folder situs milik root (ditolak demi keamanan). `chown` ke user deploy lalu `inspire setup web` lagi |
 | Audio video > 24MB | Video tanpa subtitle terlalu panjang. Mode Docker mengecilkan audio otomatis (ffmpeg) |
 
 ## Update & uninstall
@@ -398,11 +487,14 @@ src/inspire/
   scheduler.py       APScheduler
   media.py           STT, deskripsi gambar, ekstrak file, transkrip video
   skills.py          skill markdown + git
-  sandbox_server.py  server exec di container sandbox (stdlib)
+  sandbox_server.py  server exec + file di container sandbox (stdlib)
+  skills_builtin/    skill bawaan: coding, web-laravel
   setup/             bagian setup, tes key, status, wizard terminal
-  tools/             memory, search_history, schedule, web, shell, video, skill
+  tools/             memory, search_history, schedule, web, shell, files, video, skill,
+                     host (server via SSH), db (baca-saja)
   gateway/           base (perintah, pairing, media), telegram (+ /setup), discord
 bin/inspire          perintah server (Docker / native)
+bin/setup-web.sh     bagian root dari `inspire setup web` (user, key, sudoers)
 install.sh           installer satu baris
 SPEC.md              keputusan desain & fase
 ```

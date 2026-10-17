@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 log = logging.getLogger(__name__)
 
 Notify = Callable[[str, str], Awaitable[None]]
+BUILTIN = Path(__file__).parent / "skills_builtin"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}$")
 
 
@@ -95,25 +96,41 @@ class Skills:
     def _path(self, name: str) -> Path:
         return self.root / f"{name}.md"
 
+    # Skill bawaan ikut dengan kode. Skill buatan agent dengan nama sama menimpanya;
+    # menghapus / /skillundo versi buatan agent mengembalikan yang bawaan.
+
+    def _builtin(self) -> dict[str, Path]:
+        return {p.stem: p for p in sorted(BUILTIN.glob("*.md"))} if BUILTIN.exists() else {}
+
+    def is_builtin(self, name: str) -> bool:
+        return name in self._builtin() and not self._path(name).exists()
+
     def all(self) -> list[Skill]:
-        return [parse(p.read_text(encoding="utf-8"), p.stem) for p in sorted(self.root.glob("*.md"))]
+        files = self._builtin()
+        files.update({p.stem: p for p in self.root.glob("*.md")})
+        return [parse(files[n].read_text(encoding="utf-8"), n) for n in sorted(files)]
 
     def get(self, name: str) -> Skill | None:
         p = self._path(name)
-        return parse(p.read_text(encoding="utf-8"), name) if p.exists() else None
+        if not p.exists():
+            p = self._builtin().get(name)
+        return parse(p.read_text(encoding="utf-8"), name) if p and p.exists() else None
 
     def index(self) -> str:
         """Untuk system prompt: cuma nama + deskripsi, isi dibaca saat perlu."""
         items = self.all()
         if not items:
             return "(belum ada skill)"
-        return "\n".join(f"- {s.name}: {s.description}" for s in items)
+        return "\n".join(
+            f"- {s.name}: {s.description}" + (" (bawaan)" if self.is_builtin(s.name) else "")
+            for s in items
+        )
 
     def save(self, name: str, description: str, body: str, create: bool) -> str:
         if not NAME_RE.match(name):
             return "Error: name harus huruf kecil/angka/strip, 2–49 karakter (mis. 'cek-ssl-domain')."
-        exists = self._path(name).exists()
-        if create and exists:
+        exists = self._path(name).exists() or name in self._builtin()
+        if create and self._path(name).exists():
             return f"Error: skill '{name}' sudah ada. Pakai action=update."
         if not create and not exists:
             return f"Error: skill '{name}' tidak ada."
@@ -129,6 +146,8 @@ class Skills:
     def delete(self, name: str) -> str:
         p = self._path(name)
         if not p.exists():
+            if name in self._builtin():
+                return f"Error: '{name}' skill bawaan, tak bisa dihapus (bisa ditimpa dengan update)."
             return f"Error: skill '{name}' tidak ada."
         p.unlink()
         self._commit(f"delete: {name}")

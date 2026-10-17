@@ -156,12 +156,14 @@ async def _wait_pair(token: str, code: str, minutes: int = 10) -> dict | None:
 
 def _pick_openrouter() -> str | None:
     say("Mengambil daftar model gratis yang mendukung tool…")
-    free = run(checks.openrouter_free_models())
+    free = run(checks.openrouter_free_list())
     if not free:
         bad("Gagal ambil daftar. Coba lagi nanti.")
         return None
-    i = choose("Pilih model", [m.removesuffix(":free") for m in free], allow_skip=False)
-    return free[i]
+    say(c(f"{len(free)} model gratis yang mendukung tool (angka = ukuran konteks). Kualitasnya bervariasi: "
+          "coba satu, dan tambah yang lain sebagai cadangan.", "2"))
+    labels = [f"{m.removesuffix(':free')}  ({ctx // 1000}k)" for m, ctx in free]
+    return free[choose("Pilih model", labels, allow_skip=False)][0]
 
 
 def _setup_one(s: Settings, p: S.Preset) -> bool:

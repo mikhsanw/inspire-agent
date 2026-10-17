@@ -242,11 +242,13 @@ class TelegramSetup:
     async def _model_next(self, update: Update, chat_id: str, p) -> None:
         """Key sudah ada → pilih model (OpenRouter) atau langsung tes."""
         if p.id == "openrouter":
-            models = await checks.openrouter_free_models()
+            listing = await checks.openrouter_free_list()
+            models = [m for m, _ in listing]
             if not models:
                 return await self._show(update, "⚠️ Gagal ambil daftar model gratis OpenRouter.", kb([BACK]))
             self.waiting[chat_id] = {"kind": "orm", "models": models}
-            rows = [[(m.removesuffix(":free")[-40:], f"su:orm:{i}")] for i, m in enumerate(models)]
+            rows = [[(f"{m.removesuffix(':free')[-34:]} ({ctx // 1000}k)", f"su:orm:{i}")]
+                    for i, (m, ctx) in enumerate(listing)]
             return await self._show(update, "Pilih model gratis (yang mendukung tool):", kb(*rows, [BACK]))
         await self._send(update, f"⏳ Mengetes {p.model}…")
         ok, msg = await S.add_preset_model(self.settings, p)

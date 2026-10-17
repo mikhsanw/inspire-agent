@@ -380,3 +380,20 @@ def test_wizard_provider_error_goes_back_to_list(tmp_path, monkeypatch):
     monkeypatch.setattr(S.checks, "model", fail)
     assert wizard._setup_one(s, S.PRESETS[3]) is False          # tak ada gunanya mengulang: ganti penyedia
     assert prompts.count("Nama model") == 1 and not s.get("models.list")
+
+
+async def test_openrouter_list_shows_all_free_tool_models(monkeypatch):
+    models = [{"id": f"vendor/m{i}:free", "context_length": 1000 * i, "supported_parameters": ["tools"]} for i in range(1, 16)]
+    models += [
+        {"id": "vendor/notools:free", "context_length": 9_000_000, "supported_parameters": ["temperature"]},
+        {"id": "vendor/paid", "context_length": 9_000_000, "supported_parameters": ["tools"]},
+    ]
+
+    async def fake_get(url, **kw):
+        return SimpleNamespace(json=lambda: {"data": models})
+
+    monkeypatch.setattr(S.checks, "_get", fake_get)
+    listing = await S.checks.openrouter_free_list()
+    assert len(listing) == 15                                  # semua, bukan 6 teratas
+    assert listing[0] == ("vendor/m15:free", 15000) and listing[-1][0] == "vendor/m1:free"
+    assert "vendor/notools:free" not in dict(listing) and "vendor/paid" not in dict(listing)
